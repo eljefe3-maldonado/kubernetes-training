@@ -1,0 +1,195 @@
+# Secure Namespace Template
+#
+# Replace TEAM_NAME, COST_CENTER, and SENSITIVITY before applying.
+# SENSITIVITY values: low | medium | high
+#
+# Usage:
+#   sed 's/TEAM_NAME/alpha/g; s/COST_CENTER/cc-1001/g; s/SENSITIVITY/low/g' \
+#     secure-namespace.yaml | kubectl apply -f -
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: TEAM_NAME
+  labels:
+    # Used by Pod Security Admission to enforce the correct security standard.
+    # low  → baseline
+    # medium → restricted
+    # high → restricted (with additional Kyverno policies applied by label)
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+
+    # Platform metadata labels — used by Kyverno policies, cost allocation,
+    # and compliance reporting to target this namespace correctly.
+    platform.example.com/team: TEAM_NAME
+    platform.example.com/cost-center: COST_CENTER
+    platform.example.com/sensitivity: SENSITIVITY
+
+    # Kubernetes standard label for NetworkPolicy selectors.
+    kubernetes.io/metadata.name: TEAM_NAME
+  annotations:
+    platform.example.com/provisioned-by: "platform-team"
+    platform.example.com/provisioning-ticket: "PLAT-XXXX"
+    platform.example.com/oncall: "TEAM_NAME-oncall@example.com"
+
+---
+# ResourceQuota: limits total resource consumption for the namespace.
+# Prevents a single team from exhausting cluster capacity.
+# Adjust limits based on the team's approved capacity request.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: namespace-quota
+  namespace: TEAM_NAME
+spec:
+  hard:
+    # Compute
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "16"
+    limits.memory: 32Gi
+    # Workloads
+    pods: "50"
+    deployments.apps: "20"
+    services: "20"
+    # Storage
+    requests.storage: 100Gi
+    persistentvolumeclaims: "10"
+    # Secrets and config
+    secrets: "30"
+    configmaps: "30"
+    # Load balancers (cost control)
+    services.loadbalancers: "2"
+    services.nodeports: "0"   # NodePort exposes services on every node — disallow
+
+---
+# LimitRange: sets default requests and limits for pods that do not specify them.
+# Without this, a pod with no resources defined gets node defaults, which is
+# effectively unlimited within the ResourceQuota.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: namespace-limits
+  namespace: TEAM_NAME
+spec:
+  limits:
+  # Default limits applied to containers that do not specify their own.
+  - type: Container
+    default:
+      cpu: 500m
+      memory: 256Mi
+    defaultRequest:
+      cpu: 100m
+      memory: 128Mi
+    # Maximum allowed values — a container cannot request more than this.
+    max:
+      cpu: "4"
+      memory: 4Gi
+    # Minimum values — prevents zero-resource containers.
+    min:
+      cpu: 50m
+      memory: 64Mi
+  # Limit PVC sizes to prevent runaway storage requests.
+  - type: PersistentVolumeClaim
+    max:
+      storage: 20Gi
+    min:
+      storage: 1Gi
+
+---
+# Default-deny NetworkPolicy: blocks all ingress and egress.
+# Team must explicitly allow required traffic flows.
+# See Lab 04 for the allow-rule patterns.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: TEAM_NAME
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+# Allow DNS egress: required for any hostname-based communication.
+# Without this, nothing resolves after default-deny is applied.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: TEAM_NAME
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+
+---
+# Team RBAC: grants the product team developer-level access to their namespace.
+# Developers can view and manage workloads but cannot read secrets or modify RBAC.
+#
+# Replace TEAM_NAME-developers with your actual group name from your identity provider.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: developer
+  namespace: TEAM_NAME
+rules:
+# Full workload management
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets", "replicasets", "daemonsets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Service and config management
+- apiGroups: [""]
+  resources: ["services", "configmaps", "serviceaccounts"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Pod operations (read + exec for debugging)
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "pods/status"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/exec", "pods/portforward"]
+  verbs: ["create"]
+# Read-only on secrets (no create, update, or list — use get with named secret only in production)
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]   # tighten to named get only in high-sensitivity namespaces
+# Ingress management
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: developer-binding
+  namespace: TEAM_NAME
+subjects:
+- kind: Group
+  name: TEAM_NAME-developers   # replace with your IdP group
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: developer
+  apiGroup: rbac.authorization.k8s.io

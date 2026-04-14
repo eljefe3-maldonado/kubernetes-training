@@ -1,0 +1,101 @@
+# HARDENED REFERENCE — Pod Security Standards: Restricted
+#
+# Every field below is a direct response to a misconfiguration in insecure-deployment.yaml.
+# Comments explain what the setting blocks, not just what it is.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hardened-app
+  labels:
+    app: hardened-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hardened-app
+  template:
+    metadata:
+      labels:
+        app: hardened-app
+    spec:
+      # No hostPID, hostNetwork, or hostIPC — omitting them defaults to false.
+      # The container operates in its own PID, network, and IPC namespaces.
+
+      # Disable token mounting. This application does not call the Kubernetes API.
+      # If a token is not mounted, a compromised container cannot use it.
+      automountServiceAccountToken: false
+
+      # Pod-level security context applies to all containers in the pod.
+      securityContext:
+        # Refuse to start if the container tries to run as root.
+        runAsNonRoot: true
+        # Explicit non-root UID and GID. Avoids UID 0 even if the image
+        # sets a non-root USER that the runtime resolves differently.
+        runAsUser: 1000
+        runAsGroup: 1000
+        # fsGroup ensures volume mounts are accessible to the non-root user.
+        fsGroup: 1000
+        # RuntimeDefault applies the container runtime's built-in seccomp profile.
+        # This blocks ~300 system calls the container almost certainly does not need.
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+      - name: app
+        # Pin to a specific digest so the exact image is reproducible.
+        # Replace the digest with a real value from your registry.
+        image: nginx:1.27.0
+
+        securityContext:
+          # Not privileged — default is false but explicit is clearer.
+          privileged: false
+
+          # Prevents any process in the container from gaining more privileges
+          # than its parent. Blocks setuid binary abuse.
+          allowPrivilegeEscalation: false
+
+          # Drop all capabilities first, then add back only what is required.
+          # nginx does not need NET_RAW, KILL, SYS_CHROOT, or any other capability
+          # from the default set. An empty add list is the goal.
+          capabilities:
+            drop:
+            - ALL
+            # add: [] — add nothing unless you have verified the application needs it
+
+          # Prevents the attacker from writing tools or backdoors to the filesystem.
+          # Writable paths (tmp, cache dirs) are provided as emptyDir volumes below.
+          readOnlyRootFilesystem: true
+
+        # Resource limits prevent a single pod from starving the node.
+        # Requests allow the scheduler to place the pod on an appropriate node.
+        # Adjust values to match your actual application profile.
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+
+        volumeMounts:
+        # nginx writes to /var/cache/nginx and /var/run — provide writable volumes
+        # for only those paths rather than making the whole filesystem writable.
+        - name: nginx-cache
+          mountPath: /var/cache/nginx
+        - name: nginx-run
+          mountPath: /var/run
+        - name: tmp
+          mountPath: /tmp
+
+        # No hostPath volumes. No Docker socket. No host filesystem access.
+
+      volumes:
+      # emptyDir volumes are ephemeral, node-local, and scoped to the pod.
+      # They disappear when the pod is deleted and are not shared with the host.
+      - name: nginx-cache
+        emptyDir: {}
+      - name: nginx-run
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}

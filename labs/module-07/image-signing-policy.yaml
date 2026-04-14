@@ -1,0 +1,124 @@
+# Kyverno image verification policy.
+#
+# Requires:
+#   1. All images must be signed with the organization's Cosign key.
+#   2. All images must have an SBOM attestation.
+#   3. Images must come from the production registry (reuses Module 6 registry policy concept).
+#
+# Replace the key and registry values with your organization's actual values.
+# In production, use a KMS-backed key (AWS KMS, GCP KMS, Azure Key Vault)
+# rather than a file-based key pair.
+
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-signed-images
+  annotations:
+    policies.kyverno.io/title: Require Signed Images
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >
+      All container images must be signed with the organization's Cosign
+      signing key before they can be deployed. This ensures that only images
+      built by trusted CI pipelines can run in the cluster.
+      Images must also carry an SBOM attestation for supply chain visibility.
+spec:
+  validationFailureAction: Audit   # change to Enforce after key infrastructure is in place
+  background: false                 # image verification cannot run in background mode
+  rules:
+
+  - name: verify-image-signature
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    verifyImages:
+    - imageReferences:
+      # Match all images from the production registry.
+      # Replace with your registry hostname.
+      - "your-registry.example.com/*"
+      attestors:
+      - count: 1
+        entries:
+        - keys:
+            # Replace with your organization's public key (or KMS key reference).
+            # To use AWS KMS: "awskms:///arn:aws:kms:us-east-1:123456789:key/abc-def"
+            # To use GCP KMS: "gcpkms://projects/my-project/locations/us/keyRings/..."
+            publicKeys: |-
+              -----BEGIN PUBLIC KEY-----
+              MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE<your-public-key-bytes-here>
+              -----END PUBLIC KEY-----
+            signatureAlgorithm: sha256
+      mutateDigest: true    # replace tag references with immutable digest references
+      verifyDigest: true    # ensure the digest matches the signed manifest
+      required: true
+
+  - name: verify-sbom-attestation
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    verifyImages:
+    - imageReferences:
+      - "your-registry.example.com/*"
+      attestations:
+      - predicateType: https://spdx.dev/Document   # SPDX SBOM predicate type
+        attestors:
+        - count: 1
+          entries:
+          - keys:
+              publicKeys: |-
+                -----BEGIN PUBLIC KEY-----
+                MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE<your-public-key-bytes-here>
+                -----END PUBLIC KEY-----
+        # Optionally add conditions to validate SBOM content:
+        # conditions:
+        # - all:
+        #   - key: "{{ spdxVersion }}"
+        #     operator: Equals
+        #     value: "SPDX-2.3"
+
+---
+# Separate policy: require digest pinning in all image references.
+# Tags like :latest or :v1.0 are mutable — the image they point to can change
+# without the Deployment spec changing. Digest references (sha256:...) are
+# immutable and ensure reproducibility.
+#
+# Note: if you enable mutateDigest: true above, Kyverno will rewrite tags to
+# digests automatically at admission time, making this policy redundant.
+# This policy is useful as a standalone check if you are not using Kyverno
+# image verification.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-image-digest
+  annotations:
+    policies.kyverno.io/title: Require Image Digest
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >
+      Container images must reference a specific digest rather than a mutable tag.
+      This ensures the exact image that was tested and signed is the one that runs.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+  - name: check-digest
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    validate:
+      message: >
+        Image "{{ element.image }}" uses a mutable tag. Replace with a digest
+        reference (image@sha256:...) to ensure immutability.
+      foreach:
+      - list: "request.object.spec.containers"
+        deny:
+          conditions:
+            all:
+            - key: "{{ element.image }}"
+              operator: NotContains
+              value: "@sha256:"

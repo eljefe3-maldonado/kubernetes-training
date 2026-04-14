@@ -1,0 +1,191 @@
+# Kubernetes API Server Audit Policy
+#
+# This policy captures security-relevant events at the appropriate detail level.
+# It omits high-volume noise (health checks, metrics, watch reconnects) while
+# preserving full request/response bodies for sensitive operations.
+#
+# Based on CIS Kubernetes Benchmark recommendations and practical detection needs.
+# Tune log levels based on your storage budget and SIEM ingestion capacity.
+#
+# Reference levels:
+#   None        — do not log this event
+#   Metadata    — log method, URL, user, and response code (no body)
+#   Request     — log above plus request body
+#   RequestResponse — log above plus response body
+
+apiVersion: audit.k8s.io/v1
+kind: Policy
+rules:
+
+# Omit health and liveness checks — these are extremely high volume and
+# contain no security signal.
+- level: None
+  users: ["system:kube-proxy"]
+  verbs: ["watch"]
+  resources:
+  - group: ""
+    resources: ["endpoints", "services", "services/status"]
+
+- level: None
+  users: ["kubelet"]
+  verbs: ["get"]
+  resources:
+  - group: ""
+    resources: ["nodes", "nodes/status"]
+
+- level: None
+  userGroups: ["system:nodes"]
+  verbs: ["get"]
+  resources:
+  - group: ""
+    resources: ["nodes", "nodes/status"]
+
+- level: None
+  users:
+  - system:kube-controller-manager
+  - system:kube-scheduler
+  - system:serviceaccount:kube-system:endpoint-controller
+  verbs: ["get", "update"]
+  namespaces: ["kube-system"]
+  resources:
+  - group: ""
+    resources: ["endpoints"]
+
+- level: None
+  users: ["system:apiserver"]
+  verbs: ["get"]
+  resources:
+  - group: ""
+    resources: ["namespaces", "namespaces/status", "namespaces/finalize"]
+
+# Omit read-only requests to non-sensitive endpoints.
+- level: None
+  users:
+  - system:kube-controller-manager
+  verbs: ["get", "list"]
+  resources:
+  - group: "metrics.k8s.io"
+
+# Omit metrics scraping — high volume, no security value.
+- level: None
+  nonResourceURLs:
+  - /healthz*
+  - /readyz*
+  - /livez*
+  - /metrics
+  - /metrics/*
+  - /swagger*
+  - /openapi*
+  - /version
+
+# Omit leader election traffic in kube-system — high volume, no security value.
+- level: None
+  users:
+  - system:kube-controller-manager
+  - system:kube-scheduler
+  verbs: ["get", "update", "patch"]
+  namespaces: ["kube-system"]
+  resources:
+  - group: "coordination.k8s.io"
+    resources: ["leases"]
+
+# Log secret access at RequestResponse level.
+# This is the highest-priority log source for detecting credential theft.
+# Response body is captured so you can see the actual secret content if needed
+# for forensics — consider whether your log storage is sufficiently protected.
+- level: RequestResponse
+  resources:
+  - group: ""
+    resources: ["secrets", "configmaps"]
+  omitStages:
+  - RequestReceived
+
+# Log RBAC changes at RequestResponse — these are privilege changes.
+# Creates, updates, and deletes to roles and bindings should always be reviewed.
+- level: RequestResponse
+  resources:
+  - group: "rbac.authorization.k8s.io"
+    resources:
+    - clusterroles
+    - clusterrolebindings
+    - roles
+    - rolebindings
+  omitStages:
+  - RequestReceived
+
+# Log pod exec and attach — these are interactive sessions that may indicate
+# attacker activity or unauthorized access to running containers.
+- level: RequestResponse
+  resources:
+  - group: ""
+    resources: ["pods/exec", "pods/attach", "pods/portforward"]
+  omitStages:
+  - RequestReceived
+
+# Log pod creation and deletion at RequestResponse.
+# Pod specs contain image references, volumes, and security contexts — all
+# relevant to detecting policy violations and attacker persistence.
+- level: RequestResponse
+  verbs: ["create", "update", "patch", "delete"]
+  resources:
+  - group: ""
+    resources: ["pods"]
+  - group: "apps"
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+  omitStages:
+  - RequestReceived
+
+# Log service account token requests — token generation is a key escalation signal.
+- level: RequestResponse
+  resources:
+  - group: ""
+    resources: ["serviceaccounts/token"]
+  omitStages:
+  - RequestReceived
+
+# Log namespace creation and deletion — attackers may create or delete namespaces
+# to evade detection or establish persistence.
+- level: RequestResponse
+  verbs: ["create", "delete", "deletecollection"]
+  resources:
+  - group: ""
+    resources: ["namespaces"]
+  omitStages:
+  - RequestReceived
+
+# Log admission webhook configuration changes — modifying webhooks can disable
+# policy controls cluster-wide.
+- level: RequestResponse
+  verbs: ["create", "update", "patch", "delete"]
+  resources:
+  - group: "admissionregistration.k8s.io"
+    resources:
+    - mutatingwebhookconfigurations
+    - validatingwebhookconfigurations
+
+# Log all authentication failures.
+# These are captured at the Metadata level because the response body for
+# authentication failures does not contain actionable detail.
+- level: Metadata
+  omitStages:
+  - RequestReceived
+  nonResourceURLs:
+  - /api*
+  - /apis*
+  users: []
+  verbs: []
+
+# Log all other write operations at the Metadata level.
+# Captures creates, updates, patches, and deletes for all other resource types
+# without the storage cost of capturing full request/response bodies.
+- level: Metadata
+  verbs: ["create", "update", "patch", "delete", "deletecollection"]
+  omitStages:
+  - RequestReceived
+
+# Log all remaining read operations at Metadata level.
+# This captures get and list for everything not explicitly matched above.
+# Reduce to None for high-volume namespaces if storage is a constraint.
+- level: Metadata
+  omitStages:
+  - RequestReceived

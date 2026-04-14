@@ -1,0 +1,60 @@
+# Default-deny ingress and egress for two namespaces.
+#
+# Applying this immediately breaks all in-cluster communication for these
+# namespaces. You must add explicit allow rules for any traffic you need.
+# That is the point: explicit allow is safer than implicit deny.
+
+---
+# Default-deny all ingress to the app namespace.
+# No pod in this namespace will accept inbound connections until
+# a specific allow rule is added.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: app
+spec:
+  podSelector: {}          # applies to all pods in the namespace
+  policyTypes:
+  - Ingress
+  # No ingress rules = deny all ingress
+
+---
+# Default-deny all egress from the app namespace.
+# Pods cannot initiate outbound connections, including DNS.
+# DNS must be explicitly re-allowed or nothing will resolve.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: app
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  # No egress rules = deny all egress
+
+---
+# Default-deny all ingress to the data namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: data
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+
+---
+# Default-deny all egress from the data namespace.
+# The database does not need to initiate outbound connections.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: data
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress

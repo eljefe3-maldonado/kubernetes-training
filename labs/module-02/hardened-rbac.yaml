@@ -1,0 +1,139 @@
+# HARDENED REFERENCE MODEL
+#
+# Least-privilege replacements for the three personas in over-privileged-rbac.yaml.
+# Compare this against your own solution before reading the comments.
+
+---
+# --- ci-deployer ---
+# Scoped to the production namespace only.
+# Can manage workload resources (Deployments, Services, ConfigMaps) but
+# cannot read Secrets, modify RBAC, or operate outside production.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ci-deployer
+  namespace: production
+  # Disable auto-mounting — the binding below grants exactly what is needed.
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ci-deployer-role
+  namespace: production
+rules:
+# Workload resources the pipeline legitimately creates and updates.
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets", "daemonsets"]
+  verbs: ["get", "list", "create", "update", "patch"]
+- apiGroups: [""]
+  resources: ["services", "configmaps"]
+  verbs: ["get", "list", "create", "update", "patch"]
+# Read-only on pods so the pipeline can verify rollout status.
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+# No secrets access. Secret values are injected by the platform, not the pipeline.
+# No RBAC access. The pipeline cannot grant itself or others new permissions.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ci-deployer-binding
+  namespace: production
+subjects:
+- kind: ServiceAccount
+  name: ci-deployer
+  namespace: production
+roleRef:
+  kind: Role
+  name: ci-deployer-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# --- app-api ---
+# Read access to exactly one named secret.
+# Nothing else — no pod creation, no broad resource listing.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-api
+  namespace: app
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: app-api-role
+  namespace: app
+rules:
+# resourceNames restricts access to a single named secret.
+# get only — no list (which would reveal secret names), no watch.
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["db-credentials"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-api-binding
+  namespace: app
+subjects:
+- kind: ServiceAccount
+  name: app-api
+  namespace: app
+roleRef:
+  kind: Role
+  name: app-api-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# --- logging-agent ---
+# Read-only on pods and pod logs across all namespaces.
+# Uses a ClusterRole because pod/log access is namespace-scoped but the agent
+# must operate in every namespace — a RoleBinding per namespace is an option
+# if you want tighter blast radius.
+# No secrets, no configmap writes, no impersonation, no RBAC access.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: logging-agent
+  namespace: monitoring
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: logging-agent-role
+rules:
+# Pod metadata is needed to enrich log records with workload context.
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+# pods/log is the actual log stream.
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+# Node names are used to label log records.
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list"]
+# Namespace labels are used to route logs to the right pipeline.
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list"]
+# No secrets, configmaps, RBAC resources, or impersonation.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: logging-agent-binding
+subjects:
+- kind: ServiceAccount
+  name: logging-agent
+  namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: logging-agent-role
+  apiGroup: rbac.authorization.k8s.io

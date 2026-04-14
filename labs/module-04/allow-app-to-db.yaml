@@ -1,0 +1,68 @@
+# Narrow allow rules: app namespace to database namespace, port 5432 only.
+#
+# Two policies are required to permit a flow under default-deny:
+#   1. Egress allow on the source namespace (app → data:5432)
+#   2. Ingress allow on the destination namespace (data accepts from app)
+#
+# Both are required. Missing either one drops the traffic.
+
+---
+# Allow pods labelled app=api-server in the app namespace to reach
+# pods labelled app=postgres in the data namespace on port 5432.
+# All other egress remains denied by default-deny-egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-to-postgres-egress
+  namespace: app
+spec:
+  podSelector:
+    matchLabels:
+      app: api-server          # only the api-server pod, not all app-namespace pods
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: data   # target namespace by label
+      podSelector:
+        matchLabels:
+          app: postgres                        # target pod by label
+    ports:
+    - protocol: TCP
+      port: 5432
+
+---
+# Allow ingress to the postgres pod from the app namespace on port 5432 only.
+# The data namespace does not accept connections from anywhere else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-from-app-ingress
+  namespace: data
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: app
+      podSelector:
+        matchLabels:
+          app: api-server
+    ports:
+    - protocol: TCP
+      port: 5432
+
+---
+# Label the namespaces so the selectors above match.
+# In Kubernetes 1.21+, kubernetes.io/metadata.name is set automatically.
+# If your cluster is older, apply these manually:
+#
+# kubectl label namespace app kubernetes.io/metadata.name=app
+# kubectl label namespace data kubernetes.io/metadata.name=data

@@ -1,0 +1,100 @@
+# INTENTIONALLY INSECURE — FOR LAB USE ONLY
+#
+# This deployment violates every major Pod Security Standards Restricted control.
+# Each misconfiguration is annotated with the security impact.
+# Your job is to identify every problem before opening hardened-deployment.yaml.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insecure-app
+  labels:
+    app: insecure-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: insecure-app
+  template:
+    metadata:
+      labels:
+        app: insecure-app
+    spec:
+      # ISSUE: hostPID lets the container see and signal all processes on the node.
+      # An attacker can enumerate node processes, find sensitive PIDs, and
+      # potentially send signals or read /proc/<pid>/environ for other processes.
+      hostPID: true
+
+      # ISSUE: hostNetwork puts the container on the node's network namespace.
+      # Bypasses all Kubernetes NetworkPolicy. Attacker can reach the metadata API,
+      # kube-apiserver, and other node-local services directly.
+      hostNetwork: true
+
+      # ISSUE: hostIPC shares the node's IPC namespace.
+      # Allows shared memory access across all pods and host processes on the node.
+      hostIPC: true
+
+      # ISSUE: automountServiceAccountToken defaults to true.
+      # If this app does not call the Kubernetes API, the token is only a liability.
+      # A compromised container can use it to query or modify cluster resources.
+
+      containers:
+      - name: app
+        # ISSUE: mutable tag and no image digest.
+        # The image that runs tomorrow may not be the one tested today.
+        image: nginx:latest
+
+        securityContext:
+          # ISSUE: privileged gives the container almost all Linux capabilities
+          # and disables most seccomp, AppArmor, and SELinux restrictions.
+          # A privileged container can load kernel modules, modify host devices,
+          # and generally escape container isolation entirely.
+          privileged: true
+
+          # ISSUE: running as root (UID 0).
+          # If the container runtime has any vulnerability or a file is
+          # world-writable, root inside the container maps to root on the host.
+          runAsUser: 0
+          runAsGroup: 0
+
+          # ISSUE: allows privilege escalation via setuid binaries or sudo.
+          # Combined with root, this means any setuid binary in the image
+          # can be used to gain elevated privileges.
+          allowPrivilegeEscalation: true
+
+          # ISSUE: no capabilities drop.
+          # The container inherits the default capability set, which includes
+          # NET_RAW (raw sockets, ARP spoofing), SYS_CHROOT, KILL, and others.
+
+          # ISSUE: no seccompProfile.
+          # Without seccomp, the container can make any Linux system call.
+          # Seccomp significantly reduces the kernel attack surface.
+
+          # ISSUE: no readOnlyRootFilesystem.
+          # Attacker can write tools, backdoors, and configuration to the
+          # container filesystem without any additional exploit.
+
+        # ISSUE: no resource requests or limits.
+        # A single misbehaving or compromised pod can exhaust node CPU and memory,
+        # causing a denial of service for all other workloads on the node.
+
+        volumeMounts:
+        - name: host-root
+          mountPath: /host
+          # ISSUE: mounting the host root filesystem gives read/write access to
+          # the entire node, including /etc/shadow, kubelet credentials,
+          # container runtime sockets, and cloud instance metadata.
+
+        - name: docker-socket
+          mountPath: /var/run/docker.sock
+          # ISSUE: mounting the Docker socket is equivalent to root on the node.
+          # Anyone who can write to this socket can create privileged containers.
+
+      volumes:
+      - name: host-root
+        hostPath:
+          path: /
+
+      - name: docker-socket
+        hostPath:
+          path: /var/run/docker.sock

@@ -1,0 +1,119 @@
+# SIMULATED ATTACKER ARTIFACTS — FOR LAB USE ONLY
+#
+# These manifests represent what an attacker might deploy after gaining
+# initial access through a compromised service account token.
+# Apply to the incident-lab namespace for the tabletop exercise.
+#
+# DO NOT apply to a production cluster. These are intentionally dangerous.
+
+---
+# Simulated crypto miner pod.
+# Named to look like a platform workload. Requests high CPU.
+# In a real incident, this would be connecting to a mining pool.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: data-collector-d4c9f-lmpq8
+  namespace: incident-lab
+  labels:
+    app: data-collector
+    # Attacker added labels designed to blend in with platform workloads
+    app.kubernetes.io/managed-by: platform-controller
+  annotations:
+    # Plausible-looking annotation to avoid casual inspection
+    description: "Internal telemetry collection agent"
+spec:
+  containers:
+  - name: collector
+    image: busybox:1.36
+    command: ["sh", "-c"]
+    args:
+    # Simulated: in a real attack this would be a miner binary connecting outbound.
+    # Here it just sleeps so the pod stays running for forensics practice.
+    - |
+      echo "Simulated miner process running"
+      echo "Would connect to: pool.minexmr.com:4444"
+      sleep 3600
+    resources:
+      requests:
+        cpu: 900m      # suspicious: requesting most of a CPU core
+        memory: 512Mi
+      limits:
+        cpu: "2"
+        memory: 1Gi
+
+---
+# Simulated attacker persistence pod with host filesystem access.
+# In a real incident, this would be used to read node credentials,
+# modify host files, or install a backdoor on the underlying node.
+# Named to look like a debugging tool.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-util-559f6-zr8vn
+  namespace: incident-lab
+  labels:
+    app: debug-util
+  annotations:
+    description: "Temporary debug utility — safe to ignore"
+spec:
+  # Attacker reused a service account with elevated access
+  serviceAccountName: compromised-app
+  containers:
+  - name: debug
+    image: busybox:1.36
+    command: ["sh", "-c"]
+    args:
+    # Simulated: in a real attack the attacker would be reading kubelet credentials,
+    # cloud instance metadata, or installing persistence to the host filesystem.
+    - |
+      echo "Host filesystem mounted at /host"
+      echo "Simulated: ls /host/etc/kubernetes/"
+      echo "Simulated: cat /host/var/lib/kubelet/config.yaml"
+      sleep 3600
+    securityContext:
+      # In a real attack: privileged: true
+      # Replaced with false here so the lab pod actually runs under policy
+      privileged: false
+    volumeMounts:
+    # In a real attack this would be hostPath: /
+    # Replaced with emptyDir so the lab pod does not need a policy exception
+    - name: simulated-host
+      mountPath: /host
+  volumes:
+  - name: simulated-host
+    emptyDir: {}
+    # Real attacker version would be:
+    # hostPath:
+    #   path: /
+
+---
+# Simulated attacker service account.
+# Named to blend in with kube-system components.
+# In the tabletop, this service account is granted cluster-admin.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: attacker-backdoor
+  namespace: kube-system
+  annotations:
+    description: "Internal controller health monitor"   # cover story
+
+---
+# The malicious ClusterRoleBinding.
+# Grants cluster-admin to the attacker's service account.
+# Named to look like a system component.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-controller-health
+  annotations:
+    description: "Health monitoring for core controllers"   # cover story
+subjects:
+- kind: ServiceAccount
+  name: attacker-backdoor
+  namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io

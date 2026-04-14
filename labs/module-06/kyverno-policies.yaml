@@ -1,0 +1,209 @@
+# Kyverno policy set for Lab 06.
+#
+# Four enforcement policies:
+#   1. disallow-privileged-containers
+#   2. require-approved-registry
+#   3. require-resource-limits
+#   4. disallow-host-namespaces
+#
+# Plus one PolicyException example for a justified exception workflow.
+#
+# Start with validationFailureAction: Audit, review PolicyReports,
+# then switch to Enforce once you understand the blast radius.
+
+---
+# Policy 1: Block privileged containers.
+# A privileged container has nearly full access to the node kernel.
+# There is almost never a legitimate reason for an application workload
+# to run privileged. Infrastructure agents (CNI, CSI, monitoring) may
+# require exceptions — route those through the exception workflow below.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-privileged-containers
+  annotations:
+    policies.kyverno.io/title: Disallow Privileged Containers
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >
+      Privileged containers effectively disable container isolation.
+      This policy blocks any pod that sets privileged: true in any
+      container's securityContext.
+spec:
+  validationFailureAction: Audit   # change to Enforce when ready
+  background: true
+  rules:
+  - name: check-privileged
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    validate:
+      message: "Privileged containers are not allowed. Remove securityContext.privileged or set it to false."
+      pattern:
+        spec:
+          containers:
+          - =(securityContext):
+              =(privileged): "false"
+          =(initContainers):
+          - =(securityContext):
+              =(privileged): "false"
+          =(ephemeralContainers):
+          - =(securityContext):
+              =(privileged): "false"
+
+---
+# Policy 2: Require images from approved registries.
+# Prevents workloads from pulling images from untrusted public registries.
+# Replace the registry list with your organization's approved registries.
+# This reduces the risk of malicious public images and enforces the
+# registry promotion workflow from Module 7.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-approved-registry
+  annotations:
+    policies.kyverno.io/title: Require Approved Registry
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >
+      All container images must come from an approved registry.
+      Public registries (docker.io, quay.io, ghcr.io) are not permitted
+      for workloads in this cluster.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+  - name: check-registry
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    validate:
+      message: >
+        Image "{{ request.object.spec.containers[].image }}" is not from
+        an approved registry. Use your-registry.example.com or
+        mirror.example.com.
+      foreach:
+      - list: "request.object.spec.containers"
+        pattern:
+          image: "your-registry.example.com/* | mirror.example.com/*"
+      - list: "request.object.spec.initContainers"
+        pattern:
+          image: "your-registry.example.com/* | mirror.example.com/*"
+
+---
+# Policy 3: Require resource requests and limits on all containers.
+# Without limits, a single misbehaving pod can exhaust node resources and
+# trigger OOM kills across all other pods on the node.
+# Without requests, the scheduler cannot make informed placement decisions.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-resource-limits
+  annotations:
+    policies.kyverno.io/title: Require Resource Limits
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >
+      All containers must specify CPU and memory requests and limits.
+      This enables the scheduler to place pods correctly and protects
+      node stability.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+  - name: check-limits
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    validate:
+      message: "All containers must have CPU and memory requests and limits defined."
+      pattern:
+        spec:
+          containers:
+          - resources:
+              requests:
+                memory: "?*"
+                cpu: "?*"
+              limits:
+                memory: "?*"
+                cpu: "?*"
+
+---
+# Policy 4: Disallow host namespace sharing.
+# hostPID, hostNetwork, and hostIPC break container namespace isolation
+# and give the container access to node-level processes, network, and IPC.
+# Infrastructure DaemonSets (CNI plugins, node exporters) may legitimately
+# need hostNetwork — route those through the exception workflow.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-host-namespaces
+  annotations:
+    policies.kyverno.io/title: Disallow Host Namespaces
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >
+      Pods must not share host PID, network, or IPC namespaces.
+      Doing so exposes node-level resources to the container and
+      bypasses Kubernetes network isolation.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+  - name: check-host-namespaces
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    validate:
+      message: "hostPID, hostNetwork, and hostIPC are not permitted. Remove these fields from the pod spec."
+      pattern:
+        spec:
+          =(hostPID): "false"
+          =(hostNetwork): "false"
+          =(hostIPC): "false"
+
+---
+# Exception workflow example.
+# PolicyException allows a specific workload to bypass one or more policies.
+# Requirements for a valid exception:
+#   - Scoped to a named workload in a named namespace (not a wildcard)
+#   - Annotated with the business justification and the approver
+#   - Tracked in a separate exceptions register (e.g., a Git-managed list)
+#   - Reviewed on a schedule (e.g., quarterly) for continued validity
+#
+# This example allows the 'node-exporter' DaemonSet in 'monitoring' to
+# use hostNetwork and hostPID, which it legitimately needs to scrape
+# node-level metrics.
+apiVersion: kyverno.io/v2beta1
+kind: PolicyException
+metadata:
+  name: node-exporter-host-namespace-exception
+  namespace: monitoring
+  annotations:
+    exception.policy/justification: >
+      Prometheus node-exporter requires hostNetwork to bind to node ports
+      and hostPID to access per-process metrics. This is a read-only
+      infrastructure agent with no write access to node resources.
+    exception.policy/approver: "platform-security-lead"
+    exception.policy/approved-date: "2025-01-01"
+    exception.policy/review-date: "2025-04-01"
+    exception.policy/ticket: "SEC-1234"
+spec:
+  exceptions:
+  - policyName: disallow-host-namespaces
+    ruleNames:
+    - check-host-namespaces
+  match:
+    any:
+    - resources:
+        kinds:
+        - Pod
+        namespaces:
+        - monitoring
+        selector:
+          matchLabels:
+            app.kubernetes.io/name: node-exporter  # scoped to this workload only

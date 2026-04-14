@@ -1,0 +1,23 @@
+# OS and editor artifacts
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Lab output and local scratch files
+*.log
+*.tmp
+*.bak
+notes/
+scratch/
+artifacts/
+outputs/
+
+# Terraform or cluster-local leftovers if learners add them later
+.terraform/
+terraform.tfstate
+terraform.tfstate.*
+kubeconfig
+*.kubeconfig

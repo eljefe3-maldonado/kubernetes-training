@@ -1,0 +1,84 @@
+# Egress controls for the app namespace.
+#
+# Layered on top of default-deny-egress and allow-api-to-postgres-egress.
+# Allows only:
+#   - DNS (UDP/TCP 53 to kube-dns)
+#   - Previously permitted database traffic (already covered by allow-app-to-db.yaml)
+#   - An example approved external CIDR (replace with your actual allowlist)
+#
+# Everything else — including the cloud metadata API — remains blocked.
+
+---
+# Allow DNS from the app namespace to kube-dns in kube-system.
+# Without this rule, no service name resolves and the app cannot connect
+# to anything by hostname, including postgres.data.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: app
+spec:
+  podSelector: {}              # applies to all pods — DNS must work for everyone
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns   # CoreDNS pods carry this label by default
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53                 # TCP fallback for large DNS responses
+
+---
+# Allow egress to an approved external CIDR.
+# Replace 203.0.113.0/24 with the actual CIDR of your approved external service
+# (payment API, identity provider, etc.).
+# Do not use 0.0.0.0/0 — that defeats the purpose.
+#
+# Notable omissions (intentional):
+#   169.254.169.254/32  — cloud metadata API (AWS IMDS, GCP metadata)
+#   100.100.100.100/32  — Alibaba Cloud metadata
+#   The node's own IP   — attacker could reach kubelet on 10250
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-approved-external-egress
+  namespace: app
+spec:
+  podSelector:
+    matchLabels:
+      app: api-server          # only workloads that legitimately need external access
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 203.0.113.0/24   # replace with your real approved CIDR
+        except:
+        - 203.0.113.10/32      # example: exclude a specific host in that range
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# NOTE: What this does NOT protect against
+#
+# 1. DNS tunneling: an attacker can exfiltrate data via DNS queries to an
+#    attacker-controlled resolver. NetworkPolicy cannot inspect DNS payload.
+#    Use a DNS firewall (e.g., CoreDNS RPZ, Cilium DNS policy) for this.
+#
+# 2. Node-level bypass: a privileged pod or hostNetwork pod bypasses
+#    NetworkPolicy entirely because it operates at the node network level.
+#    Pod Security Standards Restricted profile prevents this.
+#
+# 3. IPv6: NetworkPolicy applies to IPv4 by default. If your cluster uses
+#    dual-stack, audit IPv6 egress separately.
+#
+# 4. Service mesh sidecar: Envoy-injected pods may have additional listener
+#    ports that NetworkPolicy does not restrict unless you explicitly include them.

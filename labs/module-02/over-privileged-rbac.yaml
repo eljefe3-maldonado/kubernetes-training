@@ -1,0 +1,133 @@
+# INTENTIONALLY BROKEN — FOR LAB USE ONLY
+#
+# This file represents a realistic but deliberately over-privileged RBAC model.
+# Every service account below has at least one serious misconfiguration.
+# Your job is to find every escalation path before looking at hardened-rbac.yaml.
+#
+# Personas:
+#   ci-deployer   — CI/CD pipeline service account, should deploy to production only
+#   app-api       — application backend, should read one secret in its namespace
+#   logging-agent — log collector, should read pod metadata and logs cluster-wide
+
+---
+# Namespace setup
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+
+---
+# --- ci-deployer ---
+# ISSUE: bound to cluster-admin cluster-wide.
+# A compromised CI runner can read all secrets, create privileged pods,
+# modify RBAC, and own the entire cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ci-deployer
+  namespace: production
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ci-deployer-cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: ci-deployer
+  namespace: production
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# --- app-api ---
+# ISSUE 1: wildcard on secrets in its namespace lets it read ALL secrets,
+#           including secrets belonging to other workloads and the CI token.
+# ISSUE 2: can create pods — attacker can deploy a privileged pod and escape.
+# ISSUE 3: can get/list/watch all resources — broad read access.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: app-api
+  namespace: app
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: app-api-role
+  namespace: app
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]       # should be get on one named secret only
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch", "create", "delete"]  # create is dangerous
+- apiGroups: [""]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]       # wildcard resource
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-api-binding
+  namespace: app
+subjects:
+- kind: ServiceAccount
+  name: app-api
+  namespace: app
+roleRef:
+  kind: Role
+  name: app-api-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# --- logging-agent ---
+# ISSUE 1: ClusterRoleBinding with wildcard verbs on core resources
+#           allows listing and reading secrets cluster-wide.
+# ISSUE 2: can update configmaps — attacker can poison logging config.
+# ISSUE 3: impersonate verb allows acting as any user or service account.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: logging-agent
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: logging-agent-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "nodes", "namespaces", "secrets", "configmaps"]
+  verbs: ["get", "list", "watch", "update"]   # update + secrets is dangerous
+- apiGroups: [""]
+  resources: ["users", "groups", "serviceaccounts"]
+  verbs: ["impersonate"]                       # should never be here
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["clusterroles", "clusterrolebindings", "roles", "rolebindings"]
+  verbs: ["get", "list", "watch", "bind"]      # bind allows privilege escalation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: logging-agent-binding
+subjects:
+- kind: ServiceAccount
+  name: logging-agent
+  namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: logging-agent-role
+  apiGroup: rbac.authorization.k8s.io

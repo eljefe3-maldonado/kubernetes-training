@@ -215,3 +215,114 @@ of what other controls are in place.
 
 Produce a hardening checklist with a provider/customer ownership split and a
 prioritized gap analysis ranked by risk and remediation effort.
+
+---
+
+## Self-Assessment
+
+**Question 1**
+A cluster has been running for two years. The CIS Kubernetes Benchmark scan
+shows no FAIL findings. A security engineer runs a manual review and finds
+the service account has cluster-admin, secrets are not encrypted at rest,
+and audit logging is sending to a bucket that is world-readable. What does
+this tell you about the benchmark?
+
+*A strong answer covers:* the CIS Kubernetes Benchmark checks configuration
+settings — API server flags, kubelet configuration, certificate file permissions.
+It does not check RBAC models, secrets encryption key management, or audit
+log access controls. A clean benchmark pass means the platform configuration
+is correct. It says nothing about the RBAC model, the handling of secrets, or
+whether detection is functional. The benchmark is a floor, not a complete
+security assessment. The finding illustrates that benchmark compliance must
+be combined with RBAC review (Module 2), secrets posture review (Module 5),
+and detection capability review (Module 9).
+
+---
+
+**Question 2**
+You are told that your EKS cluster uses "managed Kubernetes so the provider
+handles etcd security." What exactly does AWS handle, and what do you as the
+customer need to verify?
+
+*A strong answer covers:* AWS manages the etcd infrastructure — the physical
+nodes, network isolation, peer authentication between etcd members, and TLS
+for etcd communication. The customer is responsible for whether envelope
+encryption is enabled (it must be explicitly configured at cluster creation
+with a KMS key ARN — it cannot be added after the fact). The customer must
+verify: (1) envelope encryption is enabled (`aws eks describe-cluster` shows
+`encryptionConfig`), (2) the KMS key is customer-managed and not marked for
+deletion, (3) key rotation is enabled. If none of these are configured,
+secrets are stored in etcd without encryption — a customer responsibility
+gap, not a provider gap.
+
+---
+
+**Question 3**
+A node's kubelet is configured with `--anonymous-auth=true` and
+`--authorization-mode=AlwaysAllow`. Describe the specific impact an attacker
+with network access to the node subnet could have.
+
+*A strong answer covers:* with these settings, any unauthenticated request to
+port 10250 is accepted and authorized. The attacker can: list all pods on the
+node (`/pods` endpoint), read logs for any container (`/containerLogs/namespace/pod/container`),
+execute commands in any running container (`/exec/namespace/pod/container`),
+and access the kubelet's API for health and stats queries. This is equivalent
+to having `kubectl exec` and `kubectl logs` access to every pod on that node
+without any credential. Remediation: `--anonymous-auth=false`, `--authorization-mode=Webhook`
+(which delegates authorization to the API server NodeAuthorizer). This is a
+critical finding requiring immediate remediation.
+
+---
+
+**Question 4**
+Your audit policy logs everything at `Metadata` level. During an incident
+investigation, you need the full request body for a secret that was read
+four days ago. Can you get it?
+
+*A strong answer covers:* no. `Metadata` level logs the request metadata —
+who made it, what resource they accessed, the response code — but not the
+request or response body. To capture what a secret read returned, the audit
+policy must log secret access at `RequestResponse` level. The fix going
+forward: add a specific rule in the audit policy that matches `get secrets`
+and sets level `RequestResponse`. The lesson: audit policy decisions have
+forensic consequences. The events that should always be logged at
+`RequestResponse` include secret access, RBAC changes, service account token
+creation, and pod exec/attach. Storage cost for these specific events is
+manageable and is worth the forensic completeness.
+
+---
+
+**Question 5**
+A platform team member SSHes into a production node to debug a scheduling
+issue. This is the current practice for node-level debugging. What risks
+does this create, and what is the alternative?
+
+*A strong answer covers:* SSH to nodes requires managing SSH keys (rotated
+how often?), creates a privileged access path without Kubernetes audit logging,
+and the session is not recorded in any centralized audit trail. If the
+engineer's laptop is compromised, the attacker has an SSH key with node access.
+The alternative: use cloud-native session management — AWS SSM Session Manager,
+GCP IAP Tunneling — which requires no open SSH port, authenticates through
+cloud IAM, creates an auditable session record in CloudTrail, and can be
+scoped with IAM policies. For pod-level debugging, `kubectl debug` with
+ephemeral containers is the correct tool. Direct SSH to production nodes
+should be a last resort, not standard practice.
+
+---
+
+**Question 6**
+You inherit a cluster where audit logging was never configured. A potential
+incident is reported — a service account may have read secrets it was not
+supposed to access three weeks ago. What can you reconstruct, and what cannot
+be recovered?
+
+*A strong answer covers:* without audit logs, the API server requests from
+three weeks ago are unrecoverable — they were never written to disk. You can
+check current RBAC to see if the service account still has the permission it
+allegedly used. You can check any application logs from the pods using that
+service account for behavioral indicators. You may be able to check cloud
+provider logs (CloudTrail) if the service account used IRSA credentials to
+call AWS APIs outside the cluster. But the Kubernetes API call record is gone.
+This is the case for enabling audit logging before you need it. The answer
+should include steps to enable audit logging immediately and what to configure
+going forward.

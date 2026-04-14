@@ -242,3 +242,102 @@ exists and what it does not cover.
 
 Produce a restricted-baseline deployment and a residual-risk note explaining
 what the hardening addresses and what it does not.
+
+---
+
+## Self-Assessment
+
+**Question 1**
+A developer argues: "Our container runs as UID 1000, not root, so we don't
+need to drop capabilities or set readOnlyRootFilesystem." Is this correct?
+Explain specifically what risks remain with a non-root UID and no other
+hardening.
+
+*A strong answer covers:* non-root UID reduces some risks (node filesystem
+access as root, some kernel exploit paths) but does not drop capabilities.
+The default capability set includes `NET_RAW` (raw sockets, ARP poisoning on
+the pod network), `NET_BIND_SERVICE`, `KILL`, `SETUID`, `SETGID`, and others
+that an attacker can use regardless of UID. A writable filesystem as UID 1000
+still allows writing tools and backdoors. Correct answer: non-root is one
+layer; the full restricted baseline requires all the settings together.
+
+---
+
+**Question 2**
+An application requires writing temporary files during processing. A developer
+sets `readOnlyRootFilesystem: false` on the entire container. What is the
+correct approach, and what does it achieve?
+
+*A strong answer covers:* mount an `emptyDir` volume at the specific path the
+application writes to (e.g., `/tmp` or `/app/cache`) while keeping
+`readOnlyRootFilesystem: true`. This gives the application a writable area
+without making the entire container filesystem writable. Explains that a
+fully writable filesystem lets an attacker write tools anywhere — to `/usr/bin`,
+to the application directory, to any path in `$PATH` — while a targeted
+`emptyDir` limits writable access to one controlled location.
+
+---
+
+**Question 3**
+Explain the difference between what `privileged: true` does and what
+`runAsUser: 0` does. Which is more dangerous and why?
+
+*A strong answer covers:* `privileged: true` gives the container nearly all
+Linux capabilities, disables seccomp and AppArmor filtering, and gives direct
+access to host devices. It effectively breaks container isolation at the
+kernel level. `runAsUser: 0` makes the container process run as UID 0 (root)
+inside the container, which has implications for filesystem access and some
+setuid scenarios but does not by itself bypass seccomp or capability
+restrictions. `privileged: true` is more dangerous — a non-root privileged
+container is far more dangerous than a root non-privileged container.
+
+---
+
+**Question 4**
+A security scan flags a DaemonSet running with `hostPID: true` and
+`hostNetwork: true`. The platform team says this is Falco, a legitimate
+security monitoring tool. How do you evaluate this?
+
+*A strong answer covers:* Falco legitimately requires `hostPID` to inspect
+host process activity and `hostNetwork` for network monitoring. The question
+is not whether these settings are present but whether the workload is what
+it claims to be. Verify: the image comes from the approved registry with
+a valid signature, the service account has only the permissions Falco
+needs (no secret access, no RBAC modification), the workload is in the
+expected namespace, and there is a PolicyException on record with a review
+date. If all of these are true, the exception is justified. Documents the
+compensating controls in place.
+
+---
+
+**Question 5**
+After hardening a deployment to the Restricted Pod Security Standard, list
+three specific attack techniques that a compromised container can still
+execute, and for each one, name the additional control that would reduce it.
+
+*A strong answer covers:* (1) calling the Kubernetes API with the mounted
+service account token — mitigated by `automountServiceAccountToken: false`
+and least-privilege RBAC (Module 2); (2) making outbound network connections
+to attacker-controlled infrastructure — mitigated by NetworkPolicy egress
+restrictions (Module 4); (3) exploiting application-layer vulnerabilities
+to read application data — mitigated only by application security, not by
+pod configuration. Notes that pod hardening reduces post-compromise blast
+radius but does not eliminate all attacker options.
+
+---
+
+**Question 6**
+Your admission policy enforces the Restricted Pod Security Standard on all
+production namespaces. A developer submits a ticket saying their application
+must run as root because "the vendor documentation requires it." How do you
+handle this?
+
+*A strong answer covers:* challenge the requirement before granting an
+exception. Request the specific technical justification — which system call
+or filesystem access requires root? Vendor documentation often says "requires
+root" because it was written for bare-metal deployments, not because the
+application genuinely needs UID 0 in a containerized environment. If the
+requirement is real (e.g., the application uses a setuid binary that genuinely
+cannot be replaced), document the exception with scope, justification,
+approver, and a quarterly review date. Do not grant a namespace-wide exception
+— scope to the specific Deployment only.

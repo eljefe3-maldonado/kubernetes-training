@@ -212,3 +212,97 @@ sentence why a binding exists, it should not exist.
 
 Produce a hardened RBAC model and a review memo documenting the original
 escalation paths and how each was closed.
+
+---
+
+## Self-Assessment
+
+**Question 1**
+A service account needs to read a database credential secret named
+`db-credentials` in the `app` namespace. A developer writes a Role with
+`get, list` on `secrets` in that namespace. What is wrong, and what is the
+correct replacement?
+
+*A strong answer covers:* `list` on secrets reveals the names and metadata
+of every secret in the namespace, even if values cannot be read. Correct
+replacement: `get` only, with `resourceNames: ["db-credentials"]` to restrict
+to the specific named secret. Explains why `resourceNames` matters — it turns
+a namespace-wide permission into a single-resource permission.
+
+---
+
+**Question 2**
+A ClusterRole contains the `bind` verb on `clusterroles`. Explain the specific
+privilege escalation path this enables and why it is dangerous even if no
+other permission looks problematic.
+
+*A strong answer covers:* `bind` allows the principal to create a
+ClusterRoleBinding that assigns any existing ClusterRole — including
+`cluster-admin` — to any subject. The principal does not need `create
+clusterrolebindings` explicitly if `bind` is present. This is a two-step
+path to cluster-admin: create a service account, bind cluster-admin to it,
+use the new service account. Emphasizes that this is often present in CI/CD
+service accounts "for deployment flexibility" without understanding what it
+enables.
+
+---
+
+**Question 3**
+An engineering lead argues that using `cluster-admin` for the CI/CD pipeline
+service account is acceptable because "we control the pipeline and trust it
+completely." Construct a specific scenario where this reasoning leads to a
+real incident.
+
+*A strong answer covers:* a supply chain attack on the pipeline (malicious
+dependency or build tool modification), a compromised pipeline runner host,
+a developer with write access to the pipeline config who is socially
+engineered, or a leaked pipeline service account token in a log or repository.
+In any of these cases, `cluster-admin` means the incident is automatically
+a full cluster compromise — every secret, every workload, every namespace.
+A least-privilege alternative (deploy verbs in specific namespaces only)
+limits the blast radius to those namespaces.
+
+---
+
+**Question 4**
+A service account has only `create pods` in the `app` namespace and no other
+permissions. Is this dangerous? Explain the specific attack path.
+
+*A strong answer covers:* yes — `create pods` allows creating a pod with
+`privileged: true`, `hostPath: /`, and `hostNetwork: true` unless admission
+policy blocks it. A privileged pod with host filesystem access is equivalent
+to root on the node. If admission policy is not in place (Module 6), `create
+pods` alone is a path to node compromise. Notes the dependency: RBAC and
+admission control must both be correct for either to be effective.
+
+---
+
+**Question 5**
+You need to give a Prometheus monitoring agent read access to pod metrics and
+logs across all namespaces. Design the minimum viable RBAC model and explain
+each choice.
+
+*A strong answer covers:* a ClusterRole (not Role) because the agent needs
+cluster-wide access, with `get, list, watch` on `pods` and `pods/log` only —
+not `secrets`, not `configmaps`, not wildcard resources. A ClusterRoleBinding
+to the monitoring service account. Sets `automountServiceAccountToken: false`
+on all other service accounts in the monitoring namespace to prevent token
+misuse. Explains why ClusterRole with ClusterRoleBinding is justified here
+(cluster-wide pod access is the legitimate requirement) versus a per-namespace
+RoleBinding pattern.
+
+---
+
+**Question 6**
+During an RBAC audit you find a RoleBinding in the `production` namespace
+that references a ClusterRole named `cluster-admin`. A developer explains it
+was set up for a temporary debugging session six months ago. What are the
+security implications and what do you do?
+
+*A strong answer covers:* a RoleBinding referencing `cluster-admin` grants
+cluster-admin permissions scoped to that namespace — not cluster-wide, but
+all permissions on all resources within `production`. This is still excessive.
+Immediate action: identify whether anything still depends on it (audit logs,
+running workloads), replace with a scoped Role for the legitimate need, and
+remove the binding. Notes that "temporary" RBAC bindings without an expiration
+or review mechanism become permanent.

@@ -210,3 +210,119 @@ governance is working. If no, the governance exists on paper.
 Produce a governance model for a multi-team Kubernetes platform, including a
 tenancy recommendation for three teams with different sensitivity levels and
 a responsibility matrix for security controls.
+
+---
+
+## Self-Assessment
+
+**Question 1**
+Two teams share a cluster. Team A owns `payments` (PCI-scoped). Team B owns
+`analytics` (no compliance requirements). A compromise of Team B's pod leads
+to exfiltration of Team A's payment processor API key. What architectural
+decision enabled this, and what is the correct fix?
+
+*A strong answer covers:* the enabling decision was running PCI-scoped and
+non-PCI workloads in the same cluster without effective isolation between
+namespaces. Namespace separation alone does not prevent cross-namespace access
+if Team B's service account has a ClusterRoleBinding, if NetworkPolicy is
+absent, or if secrets in both namespaces are accessible through a shared
+controller. The correct fix for PCI-scoped workloads is a dedicated cluster
+or dedicated cloud account — not namespace isolation. The compliance cost
+of proving isolation on a shared cluster typically exceeds the operational
+cost of a dedicated cluster. Notes that this is the tenancy decision framework
+question: can a compromise of A expose B's data, and is that consequence
+acceptable?
+
+---
+
+**Question 2**
+Your platform has documented security requirements in a wiki. A new engineer
+joins and deploys a workload with a broad ClusterRole because she followed
+a tutorial. How did your governance model fail, and what would prevent this?
+
+*A strong answer covers:* documentation-only governance fails because it
+relies on every engineer reading, understanding, and correctly applying
+requirements under time pressure. The new engineer did not know about the
+wiki, or did not understand why the ClusterRole was problematic. The fix:
+enforceable governance. The namespace provisioning process should not allow
+engineers to create ClusterRoleBindings — that verb should be reserved for
+the platform team. Admission policy should block ClusterRoleBindings that
+reference overly broad roles. The RBAC model should give engineers access
+to create namespace-scoped Roles only. The goal: the secure path is the
+default path; the insecure action requires extra steps and platform review.
+
+---
+
+**Question 3**
+A product team requests a dedicated namespace for their new service. What
+baseline controls should be applied automatically to every new namespace,
+and who is responsible for applying them?
+
+*A strong answer covers:* the platform team is responsible for automated
+namespace provisioning that applies: (1) ResourceQuota — prevents one team
+from consuming all cluster resources; (2) LimitRange — sets default resource
+limits on pods that don't specify them; (3) default-deny NetworkPolicy —
+blocks all ingress and egress until the team adds explicit allow rules for
+their traffic flows; (4) Pod Security Admission label — enforces the Restricted
+profile for workloads in the namespace; (5) RBAC — namespace-scoped Role
+granting the team admin access to their namespace only, no ClusterRoleBindings.
+These should be applied via automation (Helm chart, Terraform, Kyverno
+generate policy) rather than manual steps that may be forgotten.
+
+---
+
+**Question 4**
+A compliance audit asks you to demonstrate that the `payments` namespace has
+network isolation from all other namespaces. You have NetworkPolicy applied.
+What else must you verify before you can make this claim?
+
+*A strong answer covers:* NetworkPolicy enforcement requires a CNI that
+supports it — verify Calico/Cilium/AWS VPC CNI with network policy add-on
+is in use (not Flannel). Verify no pods in `payments` run with `hostNetwork:
+true` (which bypasses NetworkPolicy). Verify there are no ClusterRoleBindings
+that give other namespace service accounts access to `payments` secrets
+(RBAC isolation). Verify the admission policy blocks privileged pods and
+hostNetwork pods from being deployed in `payments`. The claim "we have
+NetworkPolicy" is not sufficient — network isolation requires all four:
+CNI enforcement, no hostNetwork exceptions, RBAC scoping, and admission
+policy preventing bypasses.
+
+---
+
+**Question 5**
+The platform team is reviewing a request from a product engineer who wants
+to create a CronJob that runs `kubectl` to list pods across all namespaces
+as a "health check." How do you evaluate this, and what is the correct
+response?
+
+*A strong answer covers:* this request is for a ClusterRole with `list pods`
+cluster-wide, bound to a service account running a CronJob. Evaluate: (1) is
+this a genuine operational need or can the health check be done with metrics/
+probes instead? (2) if it is legitimate, scope it to `list pods` only with
+a ClusterRoleBinding rather than broader permissions — do not grant `list
+secrets` or other resources. (3) verify the CronJob image is from the approved
+registry and signed. (4) document the exception with a review date. The broader
+concern: a CronJob running `kubectl` is a credential and process that can be
+exploited. If the job's RBAC or the cluster credential it uses is compromised,
+it is a cluster-wide reconnaissance tool. Platform team should provide a
+supported health check mechanism rather than individual teams running kubectl.
+
+---
+
+**Question 6**
+You are building the security responsibility matrix for a new multi-team
+platform. List at least five security controls and assign each to platform
+team, security team, or product team. Explain why each assignment is correct.
+
+*A strong answer covers:* Platform team owns: admission policy baseline
+(they configure the enforcement mechanism), namespace provisioning automation
+(they create the security baseline), add-on management and upgrades (they
+control what runs at cluster level), Kubernetes version and node OS upgrades
+(cluster infrastructure). Security team owns: the security baseline
+requirements (what the platform team must enforce), exception review and
+approval process, detection rules and alert thresholds, compliance evidence
+collection, incident response escalation paths. Product team owns: service
+account design for their workloads, secret usage within their namespace,
+NetworkPolicy allow rules for their specific traffic flows, ensuring their
+application code does not log secrets. The clarity test: can every control
+be traced to a single owner who can be held accountable?

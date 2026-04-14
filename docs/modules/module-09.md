@@ -206,3 +206,119 @@ typical environment, it is never.
 
 Produce five high-confidence detections with data source, analytic logic, false
 positive rate, triage steps, and response playbook linkage.
+
+---
+
+## Self-Assessment
+
+**Question 1**
+A team says: "We have audit logging configured, so we have detection coverage."
+What is the gap between having audit logs and having detection capability,
+and what would you need to add to close it?
+
+*A strong answer covers:* audit logs contain millions of events. Without
+analytics, the evidence of an attack exists in the logs but is never found.
+Detection capability requires: (1) logs shipped to a queryable destination
+(SIEM, CloudWatch Logs with Insights, Splunk), (2) specific alert rules that
+match high-confidence attacker behaviors rather than generic anomaly, (3)
+documented triage steps for each alert so responders know what to do when
+it fires, (4) regular testing to verify alerts actually fire on the behaviors
+they target. Audit logging is a prerequisite; the detection is the layer above
+it. "We have logs" means the evidence exists. "We have detection" means someone
+or something is looking at it in time to respond.
+
+---
+
+**Question 2**
+Write the detection logic for: "A service account from a workload namespace
+reads secrets in `kube-system`." What is the data source, what makes this
+high-confidence, and what are the triage steps?
+
+*A strong answer covers:* data source — Kubernetes API server audit logs.
+Logic: filter audit log records where `verb=get`, `resource=secrets`,
+`objectRef.namespace=kube-system`, and `user.username` starts with
+`system:serviceaccount:` followed by a non-system namespace. This is
+high-confidence because workload service accounts should never need access
+to `kube-system` secrets — those secrets contain cluster infrastructure
+credentials. Triage: identify the pod using the service account, check
+whether the service account has any legitimate reason for this access (it
+should not), check whether the service account was recently granted this
+RBAC (indicates potential escalation), and check the pod for indicators of
+compromise. Expected false positive rate: near-zero in a properly governed
+cluster.
+
+---
+
+**Question 3**
+A Falco rule fires: a `wget` binary was executed inside the `payments-api`
+container. The development team says this is impossible because their container
+has a read-only filesystem. How do you triage this?
+
+*A strong answer covers:* Falco detects syscall activity — it sees the
+`execve` system call regardless of whether the filesystem is read-only
+or what the container spec says. The read-only filesystem prevents writing
+new binaries, but `wget` may already exist in the base image. Triage steps:
+check the container image for whether `wget` is present (`docker run --rm
+image which wget`), check the Falco event for the full process tree (what
+parent process spawned `wget`), check network connections made around the
+time of the alert for the destination URL. If the application should never
+run `wget`, this is a high-confidence indicator of compromise regardless
+of how the attacker is doing it.
+
+---
+
+**Question 4**
+You want to detect privilege escalation via ClusterRoleBinding creation.
+An alert fires for every ClusterRoleBinding creation. Within one week the
+on-call team has disabled the alert because it fires dozens of times daily
+from the GitOps operator. What went wrong, and how do you fix the detection?
+
+*A strong answer covers:* the alert fires on all ClusterRoleBinding creation
+without filtering out expected principals. GitOps operators (ArgoCD, Flux)
+legitimately create and update RBAC objects as part of normal operation.
+The fix: filter the alert to fire only when the creating principal is not
+in the known-good list of principals allowed to create ClusterRoleBindings
+(the GitOps service account, the platform team's CI, specific controllers).
+Alert on ClusterRoleBinding creation by `user.username` values that are not
+in the allowlist. This eliminates the GitOps noise while preserving the
+signal for unexpected principals. The broader lesson: alerts must be tuned
+to the specific environment, not generic event type matches.
+
+---
+
+**Question 5**
+An attacker has been in your cluster for 30 days with cluster-admin access
+before being discovered. If you have configured audit logging at `RequestResponse`
+for secrets and RBAC events with 365-day retention, what can you reconstruct
+about their activity?
+
+*A strong answer covers:* with audit logging at `RequestResponse` for secrets,
+you can reconstruct: every secret they accessed by name and when, every
+RBAC binding they created or modified (with the full binding spec), every
+pod they created (pod spec captured), every namespace they accessed. You can
+build a timeline of their escalation path. What you cannot reconstruct from
+audit logs alone: what happened inside containers (process execution, file
+reads, memory contents) — that requires Falco or runtime telemetry if it
+was configured. Explains that this is why `RequestResponse` level is worth
+the storage cost for the specific high-value event types.
+
+---
+
+**Question 6**
+Explain the difference between a detection that should page on-call at 2am
+versus a detection that should feed a threat hunting dashboard. Give a specific
+example of each and explain your reasoning.
+
+*A strong answer covers:* a 2am page is justified when: the signal has near-
+zero legitimate false positive rate, the scenario it detects is a critical
+security event that requires immediate human response, and delay makes the
+situation materially worse. Example: ClusterRoleBinding created by a workload
+namespace service account — this should never happen legitimately and indicates
+an active escalation attempt requiring immediate response. A threat hunting
+dashboard is appropriate when: the signal requires context to distinguish
+malicious from benign, the base rate of legitimate occurrences is non-zero,
+or the scenario allows for investigation over hours rather than minutes.
+Example: a service account reading a secret it is permitted to read but does
+not normally access — legitimate 90% of the time, worth hunting monthly.
+The principle: page when false inaction is costly; hunt when false positives
+are costly.

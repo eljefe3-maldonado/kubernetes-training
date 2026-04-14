@@ -197,3 +197,114 @@ which control would catch it, and how quickly?"
 Produce an image trust policy covering build, registry, and deployment stages,
 and analyze a compromised-image scenario to identify which controls would have
 prevented, detected, or only reduced the impact.
+
+---
+
+## Self-Assessment
+
+**Question 1**
+Your CI pipeline scans images with Trivy and produces a clean report with no
+critical CVEs. A week later, one of those images is found to contain a crypto
+miner. How is this possible, and what control would have caught it?
+
+*A strong answer covers:* CVE scanners detect known vulnerabilities in known
+packages. Malicious code injected by a compromised dependency maintainer has
+no CVE — it is novel behavior, not a known vulnerability. Trivy would report
+clean because no CVE is assigned to intentionally injected malicious code.
+Controls that could catch it: SBOM comparison between builds (an unexpected
+new package or behavior change in an existing package triggers review), runtime
+behavioral detection via Falco (unusual process execution or outbound connections),
+or egress NetworkPolicy that blocks the miner's C2 connection. Signing and
+attestation prove the image was built by the trusted pipeline but do not
+verify the content of what was built.
+
+---
+
+**Question 2**
+A developer pins their base image as `FROM python:3.11-slim`. Another developer
+says this is sufficient for supply chain security. What is wrong, and what is
+the correct practice?
+
+*A strong answer covers:* image tags are mutable — `python:3.11-slim` can
+point to a different image tomorrow if the upstream maintainer updates it.
+Pinning by tag does not guarantee the same image digest on every build. The
+correct practice is pinning by digest: `FROM python@sha256:abc123...`. The
+SHA256 digest is cryptographically tied to a specific image content — if the
+content changes, the digest changes. The team should pull the pinned digest
+from an internal mirror that has been scanned and approved, not from Docker
+Hub directly on every build. This closes both the mutable-tag and the public-
+registry-dependency attack surfaces.
+
+---
+
+**Question 3**
+You implement Cosign image signing in your CI pipeline with a policy in
+Kyverno that verifies signatures at admission. An attacker compromises the
+container registry and overwrites the `v2.1.0` tag with a malicious image.
+Does your signature verification catch this?
+
+*A strong answer covers:* yes — this is the core guarantee of image signing.
+The malicious image the attacker pushed has a different content digest than
+the original. The Cosign signature is attached to the original digest, not
+the tag. When Kyverno verifies the signature, it checks whether the current
+image digest has a valid signature from the trusted key. The overwritten image
+has no valid signature and the admission policy blocks it. This is why signing
+by digest (not tag) is essential and why registry immutable tags are
+defense-in-depth but not a substitute for signature verification.
+
+---
+
+**Question 4**
+Your team uses a registry promotion workflow: CI pushes to `staging-registry`,
+images are scanned and promoted to `prod-registry` only if they pass the
+quality gate. An attacker compromises a developer's CI credentials and pushes
+a malicious image to `staging-registry` with a clean scan result. Can the
+malicious image reach production?
+
+*A strong answer covers:* it depends on the quality gate. If the gate is
+only a CVE scan, a malicious image with no known CVEs passes and gets
+promoted. Controls that would stop it: SBOM comparison against the previous
+build (unexpected package additions trigger review), behavioral analysis at
+build time, or manual sign-off on promotion. Signing does not help here
+because the attacker has CI credentials and can sign the malicious image
+with the trusted key. This is why detection controls (SBOM comparison, runtime
+detection) are necessary alongside preventive ones — a compromised build
+system can produce valid-looking artifacts.
+
+---
+
+**Question 5**
+A developer argues that requiring version-pinned dependencies with lock file
+hash verification "slows down development" and asks for an exception. Construct
+the security case for why this control is non-negotiable for production
+workloads.
+
+*A strong answer covers:* unpinned dependencies (`>=1.2.0` or `latest`) allow
+CI to install any package version published after the lock file was created.
+A compromised maintainer account can publish a malicious patch version that
+matches the unpinned specification and is installed automatically. This is
+the exact mechanism in the attack narrative (PyPI compromise). The developer
+workflow cost is real but bounded — pin once, update on explicit decision.
+The security benefit is that no new dependency version can enter the build
+without explicit developer action and CI pipeline review. Frame it as: you
+cannot secure the supply chain if you don't control what enters it.
+
+---
+
+**Question 6**
+After a supply chain incident, leadership asks: "What controls would have
+prevented this?" Given a scenario where a malicious npm package was installed
+via an unpinned dependency, mapped through a clean scan, and deployed as
+a signed image, identify the earliest point in the chain where a control
+could have stopped it, and which control that is.
+
+*A strong answer covers:* the earliest prevention point is dependency version
+pinning with lock file hash verification — if the dependency version is pinned
+to a specific hash, the malicious version would not install even if published.
+The next detection point is SBOM generation and comparison: the malicious
+package would appear as an unexpected change in the SBOM between builds. The
+latest detection point is runtime behavioral analysis: Falco detecting unusual
+process execution or outbound connections. Notes that signing would not have
+caught this because the attacker's code was built by the legitimate CI system
+and signed with the trusted key. The lesson: supply chain security requires
+controls at the dependency layer, not just at the image layer.

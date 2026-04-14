@@ -213,3 +213,124 @@ is doing master-level work.
 Produce a secure managed-platform reference architecture for your chosen
 cloud provider and a two-page executive security review covering current
 risk, target state, and a phased remediation roadmap.
+
+---
+
+## Self-Assessment
+
+**Question 1**
+A team migrates from a self-managed cluster to EKS. Their Kubernetes security
+posture is strong: Pod Security Standards enforced, NetworkPolicy in place,
+Kyverno policies active. Two months after migration, a compromised pod accesses
+S3 buckets containing customer backups. What did they miss, and how do you
+explain this to the team?
+
+*A strong answer covers:* they missed the EKS-specific identity model. On
+EC2-backed EKS nodes, every pod can reach the instance metadata API at
+`169.254.169.254` and obtain the node's IAM instance role credentials —
+unless IMDSv2 with hop limit 1 is configured, or NetworkPolicy blocks access
+to that address. The node's IAM role had `s3:GetObject` on the backup bucket.
+The Kubernetes-layer controls (PSS, NetworkPolicy, Kyverno) are Kubernetes-
+generic and do not address cloud identity. Explanation: moving to a managed
+cloud platform adds a cloud-specific identity layer that requires cloud-specific
+controls (IRSA instead of instance roles, IMDSv2 hop-limit enforcement,
+NetworkPolicy blocking 169.254.169.254 for application pods).
+
+---
+
+**Question 2**
+You are reviewing an IRSA trust policy for an EKS service account. The
+policy condition is: `"StringLike": {"oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE:sub": "system:serviceaccount:*:*"}`.
+What is the security problem?
+
+*A strong answer covers:* the wildcard condition `system:serviceaccount:*:*`
+allows any service account in any namespace to assume this IAM role. The
+intent of IRSA is to bind a specific Kubernetes service account in a specific
+namespace to a specific IAM role. The correct condition is:
+`"StringEquals": {"oidc.eks.../id/EXAMPLE:sub": "system:serviceaccount:NAMESPACE:SERVICE_ACCOUNT_NAME"}`.
+Using `StringLike` with wildcards means that any compromised pod with any
+service account can assume this role by exploiting the trust policy. This
+is a critical misconfiguration that grants the IAM role's permissions to
+the entire cluster effectively.
+
+---
+
+**Question 3**
+A developer at your company says: "We use GKE so Google handles the security."
+What specifically does Google handle, and what are three concrete examples of
+security responsibilities that remain with your team?
+
+*A strong answer covers:* Google owns the control-plane infrastructure —
+API server, etcd, scheduler, controller manager. They patch and upgrade these
+components and handle physical security. Customer owns: (1) workload identity
+configuration — if GKE Workload Identity is not configured and pods use the
+node's default service account, they can access GCP APIs with the node's
+permissions; (2) RBAC model — Google does not prevent over-privileged service
+accounts; (3) audit log configuration — GKE enables audit logs by default
+to Cloud Logging, but the customer must configure retention, export to SIEM,
+and write alert rules; (4) node OS patching — in standard node pools, the
+customer must trigger rolling updates when Google releases new node images.
+
+---
+
+**Question 4**
+An engineering director asks you to explain the top three security risks in
+your EKS cluster in five minutes. Your last security review found: no etcd
+encryption, overprivileged node IAM roles with `s3:*` and `ec2:*`, and audit
+logging disabled. How do you present this?
+
+*A strong answer covers:* lead with business impact, not technical mechanism.
+(1) "If an attacker compromises any pod in the cluster, they can access every
+S3 bucket in our AWS account because each node has administrator-level S3
+permissions. Fix is scoping node IAM roles to what nodes actually need —
+low effort, high impact." (2) "If anyone accesses our etcd backup or the
+etcd storage directly, every secret in the cluster is readable as plaintext.
+We can enable encryption at rest with a customer-managed key — note that on
+EKS this requires cluster recreation if not done at creation time." (3)
+"If there is an active compromise today, we cannot investigate it — audit
+logging is not configured. We have no record of any API calls ever made to
+this cluster. Enabling this is a same-day action." Structure: what is the
+risk in plain language, who the likely attacker is, worst-case outcome,
+and the effort to fix.
+
+---
+
+**Question 5**
+After a security review you produce a remediation roadmap. Leadership approves
+the quick wins but pushes back on the architectural changes (etcd encryption
+requiring cluster recreation, IRSA migration across 40 workloads). How do you
+respond?
+
+*A strong answer covers:* acknowledge the effort and agree on compensating
+controls for the interim period. For etcd encryption: verify that etcd backup
+access controls are as strict as possible (no world-readable S3 buckets, CMK
+on the S3 bucket itself), and add monitoring for unexpected etcd backup access.
+For IRSA migration: prioritize the highest-risk workloads (those whose pods
+have access to the most sensitive data or external systems), migrate those
+first, and maintain the node IAM role migration as a phased project with a
+deadline. Frame both as: "we accept the residual risk for now, these are the
+compensating controls, and here is the date we commit to completing the
+migration." Document the risk acceptance with an approver, a scope, and a
+review date.
+
+---
+
+**Question 6**
+You are onboarding a new workload that needs to write to an S3 bucket and
+read from AWS Secrets Manager. Design the correct workload identity
+configuration on EKS, and explain each component.
+
+*A strong answer covers:* (1) create an IAM role with a trust policy that
+names the specific EKS cluster's OIDC issuer, the specific namespace, and
+the specific Kubernetes service account name — no wildcards in the subject
+condition; (2) attach an IAM policy to the role with only the needed
+permissions: `s3:PutObject` on the specific bucket ARN (not `s3:*`),
+`secretsmanager:GetSecretValue` on the specific secret ARN; (3) create a
+Kubernetes service account in the correct namespace annotated with
+`eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT:role/ROLE-NAME`; (4) set
+`automountServiceAccountToken: true` on the pod (required for IRSA — the
+projected service account token is the credential the AWS SDK exchanges for
+STS credentials); (5) use the AWS SDK in the application, which will
+automatically detect and use the projected token. Verify the trust policy
+is not too broad and that the IAM policy is scoped to the specific resources
+the workload needs.

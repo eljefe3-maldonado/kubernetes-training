@@ -211,3 +211,108 @@ to the application process, and have I eliminated the unnecessary ones?"
 
 Produce a safer secret-delivery design and document every leak vector in the
 original approach with a specific explanation of how each one was closed.
+
+---
+
+## Self-Assessment
+
+**Question 1**
+A developer says: "We store our secrets in Kubernetes Secrets so they're
+encrypted." What is wrong with this statement, and what would actually need
+to be true for it to be accurate?
+
+*A strong answer covers:* Kubernetes Secrets are base64-encoded by default,
+which is encoding not encryption. They are stored in etcd as plaintext base64
+values. Anyone with `get` access to the Secret via the API, or access to
+the etcd data directly (backups, exposed endpoint), can read the values.
+For the statement to be accurate, envelope encryption at rest using a KMS
+key must be explicitly configured. Even then, that only protects the etcd
+storage path — secrets are decrypted by the API server before returning to
+authorized callers, so the API path is still protected only by RBAC.
+
+---
+
+**Question 2**
+An application's startup logs show: `Starting api-server with config:
+{database: postgres://user:password@host/db, apiKey: sk-abc123}`. What
+happened, what are the consequences, and how do you fix it?
+
+*A strong answer covers:* the application logged its configuration on startup,
+including the database password and API key. These values are now in the log
+aggregation system (CloudWatch, Elasticsearch, etc.) where they may be indexed,
+searchable, and retained for years — accessible to anyone with log read access.
+The fix requires: immediate rotation of both credentials, audit of which systems
+received the logs, configuration of the logging framework to redact or exclude
+sensitive keys, and separation of configuration from secret delivery so secrets
+are not part of the application's startup config dump.
+
+---
+
+**Question 3**
+A service account has `get, list` on `secrets` in the `app` namespace. An
+attacker compromises the pod using that service account. What exactly can they
+do with the secret permissions, and what would the correct permission set be?
+
+*A strong answer covers:* `list` on secrets exposes the names and metadata of
+every secret in the namespace (not just values). `get` without `resourceNames`
+allows reading the value of any named secret they already know about. Combined,
+they can enumerate all secrets by listing them, then read every value with `get`.
+Correct permissions: `get` only, with `resourceNames: ["specific-secret-name"]`
+— this restricts access to exactly one named secret and prevents enumeration
+of others. Explains that `list` is often added by mistake and that `resourceNames`
+restriction is the key control.
+
+---
+
+**Question 4**
+Compare the security properties of these three secret delivery mechanisms
+for a database password: (a) environment variable from a Kubernetes Secret,
+(b) volume mount of a Kubernetes Secret, (c) External Secrets Operator
+syncing from AWS Secrets Manager.
+
+*A strong answer covers:* (a) environment variables expose the value to
+all processes in the container, to `kubectl describe pod` output, to crash
+dumps, and to any code that iterates `os.environ`. (b) Volume mounts are
+not in the process environment, are scoped to a file, and can use `defaultMode:
+0400` to restrict reads to the process owner — better than env vars but
+the value is still in etcd. (c) ESO with external secrets manager adds:
+the source of truth lives outside the cluster with versioning and audit logging,
+rotation in the external system propagates automatically without touching
+Kubernetes resources, and etcd contains only a synced copy (still protected
+by RBAC and at-rest encryption). For regulated environments, (c) is the
+correct default.
+
+---
+
+**Question 5**
+Your etcd backup job runs nightly and writes snapshots to an S3 bucket.
+You later discover the bucket had a public-read bucket policy for six weeks.
+What is the blast radius, and what do you do now?
+
+*A strong answer covers:* if etcd encryption at rest was not enabled, the
+snapshots contain every secret in the cluster in base64-encoded plaintext —
+immediately decodable by anyone who downloaded the snapshots. Blast radius
+includes every Secret object: database credentials, API keys, TLS certificates,
+service account tokens. Immediate actions: confirm whether anyone downloaded
+the objects (S3 server access logs, CloudTrail), rotate every secret in the
+cluster regardless of whether you can confirm access, revoke and reissue TLS
+certificates, update the bucket policy, and enable etcd encryption at rest
+going forward. Notes that this is why etcd backups need access controls as
+strict as etcd itself.
+
+---
+
+**Question 6**
+A team uses `automountServiceAccountToken: true` (the default) for their
+web frontend pods. The pods never call the Kubernetes API. Explain the
+specific risk this creates and how to remediate it.
+
+*A strong answer covers:* every pod receives a mounted service account token
+at `/var/run/secrets/kubernetes.io/serviceaccount/token`. If the frontend pod
+is compromised, the attacker reads the token and uses it to call the Kubernetes
+API with whatever RBAC the service account has. Even a default service account
+with minimal RBAC leaks cluster information and can be used to enumerate
+resources. The token also increases the value of compromising the pod —
+it becomes a credential theft target. Remediation: set `automountServiceAccountToken:
+false` on the pod spec or service account for any workload that does not
+call the Kubernetes API.

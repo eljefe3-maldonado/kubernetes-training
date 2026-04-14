@@ -217,3 +217,100 @@ policies that accurately reflect the current threat model.
 
 Produce a network policy set with default-deny and scoped allow rules, and a
 gap analysis of the attack paths that remain after the policies are applied.
+
+---
+
+## Self-Assessment
+
+**Question 1**
+You apply a default-deny egress policy to the `payments` namespace. Immediately
+after applying it, every application in the namespace fails to resolve service
+names. No pods can connect to anything. What did you forget, and why does this
+happen?
+
+*A strong answer covers:* DNS resolution uses UDP and TCP port 53 to
+kube-dns (`kube-system` namespace). A default-deny egress policy blocks all
+outbound traffic including DNS queries. The fix is an explicit egress allow rule
+permitting UDP/TCP on port 53 to the kube-dns pod or its service IP. Explains
+that this is the most common first mistake when rolling out NetworkPolicy —
+DNS must always be explicitly allowed in any restrictive egress policy.
+
+---
+
+**Question 2**
+A developer argues: "We have NetworkPolicy on all application namespaces so
+lateral movement between namespaces is blocked." A pod in `frontend` is
+compromised. What can the attacker still do, and what does NetworkPolicy not
+prevent?
+
+*A strong answer covers:* NetworkPolicy controls pod-to-pod traffic but does
+not prevent the compromised pod from reaching its explicitly allowed traffic
+paths (which may include a database or cache). If the CNI does not enforce
+NetworkPolicy, all policies are silently ignored. `hostNetwork: true` pods
+bypass NetworkPolicy entirely. The metadata API at `169.254.169.254` is
+reachable unless explicitly blocked. The attacker can still call any allowed
+external destination. Correct answer: NetworkPolicy is one layer; its
+effectiveness depends on CNI support, pod security baseline, and policy
+completeness.
+
+---
+
+**Question 3**
+You discover that your cluster is running Flannel as the CNI. You have 30
+NetworkPolicy resources applied across production namespaces. What is the
+security implication, and what do you do?
+
+*A strong answer covers:* Flannel does not enforce NetworkPolicy. All 30
+policies are ignored — the cluster is operating with a flat network regardless
+of what the policies say. Immediate action: evaluate CNI migration to Calico,
+Cilium, or the AWS VPC CNI with network policy add-on. Until migration, all
+other controls that assume network isolation are undermined. Notes that CNI
+enforcement verification is the first step before writing any NetworkPolicy.
+
+---
+
+**Question 4**
+Explain why blocking the metadata API at `169.254.169.254` with NetworkPolicy
+is a defense-in-depth control rather than a complete solution, and what
+the complementary control is.
+
+*A strong answer covers:* NetworkPolicy can block pod access to the metadata
+API, but it depends on CNI enforcement and policy completeness. IMDSv2 with
+a hop limit of 1 blocks pod access at the hypervisor/network layer regardless
+of Kubernetes configuration — the PUT request for a session token cannot reach
+the metadata service from a pod because it takes two hops (pod to node, node
+to IMDS). Both controls should be in place: NetworkPolicy egress block for
+defense-in-depth, IMDSv2 hop-limit-1 as the authoritative control. Neither
+alone is sufficient.
+
+---
+
+**Question 5**
+A team wants to allow their API pods to connect to an external payment
+processor on `api.payments-provider.com`. How do you write the egress
+NetworkPolicy, and what gaps remain after applying it?
+
+*A strong answer covers:* NetworkPolicy does not support DNS-based egress
+rules — policies reference IP CIDRs, not hostnames. To allow traffic to a
+domain, you must allow the CIDR range of that domain's IPs, which can change.
+The correct approach is to allow port 443 to the specific CIDR block of the
+payment processor, or use a service mesh or egress gateway that can enforce
+FQDN-based egress. Gaps that remain: the allowed CIDR may include other hosts
+at the same IP range, and IP changes can break the policy without notice.
+A policy must be maintained as architecture changes.
+
+---
+
+**Question 6**
+During a network policy review you find an allow rule that permits all egress
+traffic from the `reporting` namespace to `0.0.0.0/0` on port 443. A developer
+says this is needed for "HTTPS to external APIs." How do you evaluate this?
+
+*A strong answer covers:* `0.0.0.0/0` on 443 allows the reporting namespace
+to make HTTPS connections to any IP on the internet, including attacker-
+controlled infrastructure. The correct approach is to enumerate the specific
+external endpoints the reporting service needs and restrict to those CIDRs,
+or use an egress gateway/proxy to enforce FQDN-based allowlists. The vague
+"external APIs" justification requires a concrete list of destinations — any
+destination not on that list should not be reachable. Explains that port-443-
+to-anywhere is a common data exfiltration path because HTTPS is rarely blocked.

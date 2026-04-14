@@ -192,3 +192,115 @@ protecting anything.
 
 Produce an enforceable policy set with verified test results and a documented
 exception workflow with scope, justification, and review date requirements.
+
+---
+
+## Self-Assessment
+
+**Question 1**
+You deploy Kyverno with five policies in `Audit` mode. Six months later, every
+policy is still in audit mode. An audit finds eleven privileged containers in
+production. What failed organizationally, and what process would have prevented
+this?
+
+*A strong answer covers:* audit mode produces violations logs but does not
+block deployments — the organization never completed the audit-to-enforce
+transition. What failed: no owner was assigned to drive the transition, no
+deadline was set, no metric tracked how many violations were outstanding, and
+no SLA defined how long a violation could exist before escalation. The process
+that prevents this: define an audit period with a fixed end date, inventory
+violations, require remediation or documented exceptions for each one by the
+end date, then flip to enforce. Without those steps, audit mode becomes the
+permanent state.
+
+---
+
+**Question 2**
+A Kyverno policy uses `failurePolicy: Ignore` for a rule that blocks
+privileged containers. The Kyverno pod crashes during a deployment window.
+What happens?
+
+*A strong answer covers:* when the admission webhook is unreachable and
+`failurePolicy: Ignore` is set, the API server allows the request through
+without policy evaluation. A privileged container deployment submitted during
+the Kyverno outage would succeed. This is appropriate for low-criticality
+policies but not for security-critical ones. Privileged container blocking,
+approved-registry enforcement, and other security-critical policies should
+use `failurePolicy: Fail` — the deployment fails rather than bypassing policy.
+Operationally, this means Kyverno availability becomes a prerequisite for
+any deployment, so Kyverno must be highly available.
+
+---
+
+**Question 3**
+A developer submits a `PolicyException` request for their workload because
+the image signature verification policy blocks their deployment. They say
+their image was built by the internal CI but something went wrong with signing.
+How do you handle this?
+
+*A strong answer covers:* do not grant a broad exception — fix the signing
+issue in CI instead. The correct response is to investigate why the build
+did not produce a signed image (broken signing step, missing key access,
+wrong attestation format) and fix the pipeline. If a temporary exception
+must be granted during the fix, scope it to the specific Deployment, in the
+specific namespace, with an explicit review date within 48-72 hours. Document
+that it is a temporary exception for a pipeline issue. A correctly scoped
+exception is preferable to disabling the policy cluster-wide or for the whole
+namespace. Note that a pattern of signing exceptions indicates CI pipeline
+reliability issues, not a policy problem.
+
+---
+
+**Question 4**
+Your admission policy requires images to come from `registry.internal.company.com`.
+A developer deploys a Helm chart that uses an init container pulling from
+`docker.io/bitnami/wait-for-it`. The policy blocks it. The developer argues
+this init container is harmless. How do you respond?
+
+*A strong answer covers:* the policy is working correctly — the init container
+is pulling from an unapproved registry. "Harmless" is a judgment that cannot
+be verified without reviewing the image, which is the point of the policy.
+The correct remediation is to mirror the init container image to the internal
+registry, verify its contents, and update the Helm chart to reference the
+internal copy. Do not grant a registry exception for Docker Hub — that path
+leads to an expanding set of approved-exception registries that defeats the
+control. Note that Helm charts often pull from public registries and require
+mirroring for air-gapped or registry-controlled environments.
+
+---
+
+**Question 5**
+A security review finds that your policy engine has 47 active PolicyExceptions.
+Many are over a year old. What process do you put in place, and which exceptions
+do you prioritize reviewing first?
+
+*A strong answer covers:* prioritize exceptions that apply to the most
+security-critical policies (privileged containers, host namespaces, registry
+allowlists) and those scoped too broadly (entire namespaces rather than specific
+workloads). For each exception: verify the workload still exists, verify the
+original justification is still valid, check if the underlying issue has been
+fixed and the exception is no longer needed, and renew or close with a new
+review date. Process going forward: all new exceptions require a review date
+no more than 90 days out, automated reminders go to the workload owner two
+weeks before expiry, and exceptions not renewed by the review date are
+automatically closed by the platform team.
+
+---
+
+**Question 6**
+You are designing admission policies for a new cluster. Which controls belong
+in the admission policy engine versus in CI/CD, and why? Give at least two
+examples in each category.
+
+*A strong answer covers:* admission policy is the right place for controls
+that must block a deployment before it reaches the scheduler and that can be
+evaluated from the pod spec alone — e.g., privileged container blocking,
+approved registry enforcement, required resource limits. These cannot be
+left to CI/CD because not all deployments go through CI (manual deploys,
+GitOps sync, operator-created pods). CI/CD is the right place for controls
+that require code analysis or external data not available at admission time —
+e.g., secret scanning in manifests and code, dependency vulnerability scanning
+(Trivy/Grype in CI), SAST. Both CI/CD and admission should enforce image
+registry allowlists — CI ensures only approved images are pushed, admission
+ensures only approved images can run. Explains that admission is defense-in-
+depth for what CI is supposed to catch.

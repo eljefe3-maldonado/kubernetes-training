@@ -200,3 +200,119 @@ or days. You have time to think before you act. Use it.
 Produce a namespace-compromise runbook that sequences evidence preservation,
 isolation, RBAC revocation, credential rotation, and workload remediation
 with explicit justification for the order of operations.
+
+---
+
+## Self-Assessment
+
+**Question 1**
+An alert fires at 11:47 PM indicating a `kubectl exec` session in a production
+pod from an unknown IP. Your first instinct is to delete the pod immediately
+to stop the attacker. What is wrong with this action, and what should you do
+first?
+
+*A strong answer covers:* deleting the pod immediately destroys the evidence
+needed to determine scope, removes the only record of what the attacker did
+inside the container (process execution, file access, network connections),
+and does nothing about persistence mechanisms the attacker may have already
+established. The correct first action: preserve evidence — capture the pod
+spec (`kubectl get pod -o yaml`), current logs (`kubectl logs`), and a list
+of all resources in the namespace. Then query audit logs for every API call
+made by the pod's service account. Only after understanding scope should you
+move to isolation (NetworkPolicy default-deny on the pod) rather than deletion.
+Isolation stops the attacker's communication while preserving forensic state.
+
+---
+
+**Question 2**
+During a cluster-admin compromise investigation, you find a ClusterRoleBinding
+granting `cluster-admin` to `system:serviceaccount:reporting:analytics`. You
+delete the binding. Thirty minutes later, the attacker still has cluster-admin
+access. What did you miss?
+
+*A strong answer covers:* deleting one persistence mechanism does not mean
+all are gone. A sophisticated attacker with cluster-admin will create multiple
+persistence paths. The investigation should search for: other ClusterRoleBindings
+to cluster-admin or high-privilege roles, new service accounts in `kube-system`
+created in the last N days, CronJobs or Jobs in unexpected namespaces, modified
+admission webhook configurations, and changes to the GitOps repository if
+applicable. The attacker likely created a second service account and binding
+while they had access. The correct process is to search for all persistence
+mechanisms before removing any, so that the removal is comprehensive.
+
+---
+
+**Question 3**
+You are rotating credentials after a service account compromise. You rotate
+the service account token first, then rotate the database password the service
+account had access to, then restart the workloads. What is the problem with
+this sequence?
+
+*A strong answer covers:* rotating the service account token first invalidates
+the stolen token but leaves the database password unrotated for the duration
+of the credential rotation window. If the attacker already copied the database
+password (which they would have done immediately upon gaining access), they
+can use it to connect to the database directly while you are rotating other
+credentials. The correct sequence: revoke elevated RBAC first (any malicious
+bindings), then rotate the database password (and all secrets the compromised
+account could access), then rotate the service account itself, then restart
+workloads with new credentials. Rotate the highest-value secrets first, not
+the stolen credential first.
+
+---
+
+**Question 4**
+A pod was deleted by the on-call engineer immediately after an alert fired.
+Twelve hours later, you are asked to determine whether the attacker read
+the database password. What sources can you still query, and what is
+unrecoverable?
+
+*A strong answer covers:* recoverable from centralized log aggregation (if
+configured): container logs shipped to CloudWatch or a SIEM before the pod
+was deleted. Recoverable from Kubernetes audit logs: API calls made by the
+pod's service account — if the service account called `get secrets` on the
+secret containing the database password, that is recorded in the audit log.
+Unrecoverable: what happened inside the container (file reads, process
+execution, memory) if no runtime telemetry (Falco) was in place and container
+logs were not shipped before deletion. If the attacker read the mounted secret
+file directly from the filesystem without making an API call, there is no
+audit log entry for that access — only Falco syscall monitoring would have
+captured it.
+
+---
+
+**Question 5**
+After closing an incident, your post-incident review identifies that the
+attacker had cluster-admin for six days before detection. You are asked to
+determine the full blast radius. What is your process?
+
+*A strong answer covers:* with six days of cluster-admin, assume the attacker
+has read every secret in every namespace. Query audit logs for every `get
+secrets` call by the compromised principal over those six days to confirm.
+For each secret they accessed, identify the system it provides access to and
+initiate rotation. Check CloudTrail (or equivalent cloud logs) for API calls
+made using cloud credentials that may have been obtained through IRSA or
+mounted cloud credentials — the blast radius may extend outside the cluster.
+Check for persistence mechanisms (other service accounts, CronJobs, modified
+webhooks). Check the GitOps repository for changes. The blast radius is
+everything the attacker could have read plus everything those credentials
+could have accessed outside the cluster.
+
+---
+
+**Question 6**
+A junior engineer on your team says: "We should automate incident response
+so pods are automatically deleted when a suspicious alert fires." What is
+your response?
+
+*A strong answer covers:* automated remediation that deletes pods destroys
+evidence, may delete legitimate workloads during false positives, and does
+not address persistence mechanisms. A false positive that auto-deletes a
+production pod causes an availability incident worse than the original security
+alert. Better automated responses: (1) apply a default-deny NetworkPolicy to
+isolate the pod — stops attacker communication while preserving evidence; (2)
+capture pod logs and spec automatically to a retention store before any human
+action; (3) revoke elevated RBAC bindings if the automation can determine
+with high confidence which ones are malicious. Deletion should remain a human
+decision made after scope is understood. Automation should assist evidence
+preservation and isolation, not remediation.

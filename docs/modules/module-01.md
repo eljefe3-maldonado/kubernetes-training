@@ -196,3 +196,94 @@ require judgment, not configuration.
 
 Produce a trust map with annotated abuse paths and explain the shortest route
 from a compromised workload to cluster-wide impact.
+
+---
+
+## Self-Assessment
+
+Write your answer before reading the guidance. A strong answer is specific —
+it names components, explains the mechanism, and identifies the attacker's
+next step. A weak answer stays general.
+
+**Question 1**
+You have read access to an unfamiliar production cluster. You have 20 minutes
+to find the single highest-risk issue. What do you look at first, in what
+order, and why?
+
+*A strong answer covers:* starting with `kubectl get clusterrolebindings` to
+find over-privileged principals, then `kubectl get pods -A` for unexpected
+workloads in `kube-system`, then checking whether the API server endpoint is
+public. Explains that RBAC is the highest-leverage finding because it determines
+blast radius for every other issue. Does not start with CVE scanners or workload
+configuration.
+
+---
+
+**Question 2**
+A developer says: "We run on a private cluster with no public API endpoint,
+so external attackers cannot reach us." What is incomplete about this reasoning,
+and what risks does it not address?
+
+*A strong answer covers:* internal threat paths (compromised workload, stolen
+developer credential, CI pipeline access), the fact that most real incidents
+start from inside the perimeter, and at least two specific risks a private
+cluster does not mitigate — for example, a pod exploiting another pod via
+the flat network, or a developer with cluster-admin whose laptop is compromised.
+
+---
+
+**Question 3**
+You discover a ClusterRoleBinding granting `cluster-admin` to a service account
+named `monitoring-agent` in the `default` namespace. The binding is two years
+old. What do you do, and in what order?
+
+*A strong answer covers:* not deleting immediately — first determine whether
+any running workload depends on this binding, then check audit logs to see
+what API calls have been made with this service account recently, then identify
+the legitimate permission requirement and replace the binding with a least-
+privilege alternative, then remove the cluster-admin binding. Explains why
+order matters: deleting first could break a production workload with no warning.
+
+---
+
+**Question 4**
+An attacker compromises a pod that has the default service account with no
+explicit RBAC bindings. Describe what the attacker can and cannot do from
+inside that pod.
+
+*A strong answer covers:* can make network connections to other pods (unless
+NetworkPolicy restricts it), can reach the metadata API (in cloud environments),
+can call the Kubernetes API with the mounted token but with very limited
+permissions in a default setup. Cannot read secrets, cannot list cluster
+resources, cannot create pods. Next step the attacker would try: scan the
+network for reachable services, attempt to reach the metadata API for cloud
+credentials. Notes that "very limited" depends on cluster configuration —
+some clusters bind roles to the default service account explicitly.
+
+---
+
+**Question 5**
+Explain why etcd is a higher-value target than the API server in the context
+of an attacker who already has network access to the control-plane subnet but
+has no Kubernetes credentials.
+
+*A strong answer covers:* the API server requires valid credentials (certificate,
+token, or OIDC) to return data — unauthenticated access is rejected. etcd
+without client authentication returns the full cluster state including all
+secrets. If etcd is accessible from the node subnet without mutual TLS, an
+attacker on any node can read everything. Also notes that etcd backups
+often have weaker access controls than etcd itself and represent the same risk.
+
+---
+
+**Question 6**
+A security scan shows that a cluster's kubelet on every node has
+`--anonymous-auth=true`. The platform team says "we've had this configuration
+for two years and nothing bad has happened." How do you respond?
+
+*A strong answer covers:* the absence of a detected incident does not mean
+the configuration is safe — it means either no one with network access to
+the node subnet has exploited it yet, or they have and it was not detected.
+Explains specifically what `--anonymous-auth=true` enables (unauthenticated
+API calls to port 10250, which allows exec into pods, log reads, and kubelet
+queries). Proposes a remediation path that does not require cluster downtime.

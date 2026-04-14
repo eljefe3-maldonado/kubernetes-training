@@ -1,5 +1,17 @@
 # Lab 12: Cloud Provider Mappings And Reference Architecture
 
+## Module Alignment
+
+- Module doc: `docs/modules/module-12.md`
+- Curriculum: Module 12 and capstone prep
+- Estimated time: 75 to 120 minutes
+
+## What You Will Produce
+
+- a cloud-specific reference architecture
+- control mappings for identity, networking, secrets, and logging
+- inputs for the final capstone roadmap
+
 ## Objective
 
 Produce a reference architecture for a secure managed Kubernetes platform in
@@ -18,7 +30,13 @@ state, top control gaps, and a phased remediation roadmap.
 
 | File | Purpose |
 | --- | --- |
-| `reference-architecture.md` | Reference architecture template to complete |
+| `reference-architecture.md` | Blank template — complete this first |
+| `eks-reference-architecture-example.md` | Fully worked EKS example — review this after completing your own |
+
+**Important**: complete `reference-architecture.md` before opening the example.
+The value of this lab is in making your own decisions first, then comparing
+your reasoning against a worked model. Reading the example first turns a design
+exercise into a copying exercise.
 
 ## Step 1 — Provider Comparison
 
@@ -111,9 +129,26 @@ List the five highest-priority gaps, each with:
 | 2 — Foundation | Weeks 5–12 | Core hardening baseline | |
 | 3 — Maturity | Months 4–6 | Detection, policy-as-code, governance | |
 
+## Step 6 — Compare Against The Model Answer
+
+Open `eks-reference-architecture-example.md` and compare it to your completed
+architecture. For each section, answer:
+
+1. What choices did you make differently, and why?
+2. What controls are in the example that you did not include — are they missing
+   from your environment or did you consciously omit them?
+3. What is in your architecture that is not in the example — what risk does
+   yours address that the EKS example does not?
+4. Review the **Open Risks** section of the example. Does your architecture have
+   an equivalent honest accounting of what is not yet in place?
+
+The goal is not to match the example. The goal is to be able to defend every
+difference with a sentence that starts with "I chose X instead of Y because..."
+
 ## Deliverable
 
-Completed reference architecture document plus your executive security review.
+Completed reference architecture document, your comparison notes against the
+EKS example, and your executive security review.
 
 ## Assessment Question
 

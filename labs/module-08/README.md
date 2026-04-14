@@ -1,5 +1,17 @@
 # Lab 08: Cluster Hardening And Platform Baselines
 
+## Module Alignment
+
+- Module doc: `docs/modules/module-08.md`
+- Curriculum: Module 8
+- Estimated time: 75 to 90 minutes
+
+## What You Will Produce
+
+- a hardening checklist
+- an ownership split between provider and customer controls
+- a prioritized gap analysis
+
 ## Objective
 
 Produce a cluster hardening checklist for one managed Kubernetes platform and

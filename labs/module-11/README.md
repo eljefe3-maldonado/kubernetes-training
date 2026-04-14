@@ -1,5 +1,17 @@
 # Lab 11: Governance, Multi-Tenancy, And Platform Security Operating Model
 
+## Module Alignment
+
+- Module doc: `docs/modules/module-11.md`
+- Curriculum: Module 11
+- Estimated time: 60 to 90 minutes
+
+## What You Will Produce
+
+- a platform security operating model
+- tenancy recommendations
+- a guardrail strategy for shared clusters
+
 ## Objective
 
 Design a security operating model for an internal platform that serves multiple

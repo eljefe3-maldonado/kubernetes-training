@@ -1,5 +1,17 @@
 # Lab 02: RBAC Review And Least-Privilege Redesign
 
+## Module Alignment
+
+- Module doc: `docs/modules/module-02.md`
+- Curriculum: Module 2
+- Estimated time: 75 to 90 minutes
+
+## What You Will Produce
+
+- a rewritten RBAC model
+- a privilege-escalation review memo
+- a list of the highest-risk permissions
+
 ## Objective
 
 Audit a deliberately over-privileged RBAC model, identify every privilege

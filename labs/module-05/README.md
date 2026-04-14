@@ -1,5 +1,17 @@
 # Lab 05: Secrets, Exposure Vectors, And Safer Delivery
 
+## Module Alignment
+
+- Module doc: `docs/modules/module-05.md`
+- Curriculum: Module 5
+- Estimated time: 60 to 75 minutes
+
+## What You Will Produce
+
+- a safer secret-delivery design
+- a summary of exposure paths in the original deployment
+- a recommendation note for production use
+
 ## Objective
 
 Identify every path through which a workload leaks secret material, then

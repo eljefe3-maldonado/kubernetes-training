@@ -1,5 +1,17 @@
 # Lab 06: Admission Control And Policy-As-Code
 
+## Module Alignment
+
+- Module doc: `docs/modules/module-06.md`
+- Curriculum: Module 6
+- Estimated time: 90 to 120 minutes
+
+## What You Will Produce
+
+- an applied policy set
+- verified blocked-test results
+- an exception workflow and rollout plan
+
 ## Objective
 
 Build a policy set that blocks dangerous workload patterns before they reach the
@@ -22,6 +34,10 @@ kubectl create -f https://github.com/kyverno/kyverno/releases/latest/download/in
 | File | Purpose |
 | --- | --- |
 | `kyverno-policies.yaml` | Four enforcement policies plus an exception pattern |
+
+## Core Artifact
+
+- `kyverno-policies.yaml`
 
 ## Step 1 — Apply The Policies In Audit Mode
 

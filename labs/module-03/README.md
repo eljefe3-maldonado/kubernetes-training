@@ -1,5 +1,17 @@
 # Lab 03: Pod Hardening To Restricted Baseline
 
+## Module Alignment
+
+- Module doc: `docs/modules/module-03.md`
+- Curriculum: Module 3
+- Estimated time: 60 to 90 minutes
+
+## What You Will Produce
+
+- a hardened deployment manifest
+- a residual-risk note
+- a before/after comparison of workload security posture
+
 ## Objective
 
 Take a deliberately insecure deployment and harden it until it meets the

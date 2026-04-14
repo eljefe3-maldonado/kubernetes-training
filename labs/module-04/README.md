@@ -1,5 +1,17 @@
 # Lab 04: Network Isolation With NetworkPolicy
 
+## Module Alignment
+
+- Module doc: `docs/modules/module-04.md`
+- Curriculum: Module 4
+- Estimated time: 75 to 90 minutes
+
+## What You Will Produce
+
+- a default-deny posture
+- scoped allow rules for application traffic
+- a short analysis of what NetworkPolicy still does not cover
+
 ## Objective
 
 Implement layered network defenses using Kubernetes NetworkPolicy. Start from

@@ -1,5 +1,17 @@
 # Lab 07: Software Supply Chain And Image Trust
 
+## Module Alignment
+
+- Module doc: `docs/modules/module-07.md`
+- Curriculum: Module 7
+- Estimated time: 60 to 90 minutes
+
+## What You Will Produce
+
+- an image trust policy
+- a trust-chain description from source to deployment
+- a short note on preventive versus detective supply chain controls
+
 ## Objective
 
 Design an image trust policy that combines build provenance, image signing,

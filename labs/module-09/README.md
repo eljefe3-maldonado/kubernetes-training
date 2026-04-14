@@ -1,5 +1,17 @@
 # Lab 09: Detection Engineering And Threat Hunting
 
+## Module Alignment
+
+- Module doc: `docs/modules/module-09.md`
+- Curriculum: Module 9
+- Estimated time: 75 to 90 minutes
+
+## What You Will Produce
+
+- a detection matrix
+- five candidate detections
+- response linkage for each analytic
+
 ## Objective
 
 Build practical Kubernetes detection content. Learn which telemetry sources

@@ -1,5 +1,17 @@
 # Lab 10: Incident Response And Forensics In Kubernetes
 
+## Module Alignment
+
+- Module doc: `docs/modules/module-10.md`
+- Curriculum: Module 10
+- Estimated time: 90 to 120 minutes
+
+## What You Will Produce
+
+- a completed tabletop runbook
+- evidence notes and containment decisions
+- post-incident control improvements
+
 ## Objective
 
 Run a tabletop exercise that starts with a detection alert and ends with cluster
@@ -19,6 +31,11 @@ and documenting persistence mechanisms before removing them.
 | --- | --- |
 | `tabletop-scenario.md` | Structured incident scenario with timed injects |
 | `attacker-pod.yaml` | Simulated attacker persistence artifact for analysis |
+
+## Core Artifacts
+
+- `tabletop-scenario.md`
+- `attacker-pod.yaml`
 
 ## Incident Overview
 

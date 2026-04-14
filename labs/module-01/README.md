@@ -1,5 +1,17 @@
 # Lab 01: Kubernetes Architecture Trust Map
 
+## Module Alignment
+
+- Module doc: `docs/modules/module-01.md`
+- Curriculum: Module 1
+- Estimated time: 60 to 90 minutes
+
+## What You Will Produce
+
+- a completed trust map
+- three annotated abuse paths
+- a short explanation of workload-to-cluster escalation risk
+
 ## Objective
 
 Build a component-level trust map of your cluster. Annotate each communication
@@ -12,6 +24,10 @@ attacker does before you ever touch a security control.
 - A running cluster: kind, k3s, minikube, or a managed cloud cluster
 - kubectl configured with at least read access to kube-system
 - A copy of `trust-map-template.md` from this directory to fill in
+
+## Core Artifact
+
+- `trust-map-template.md`
 
 ## Step 1 — Enumerate Control-Plane Components
 

@@ -91,6 +91,7 @@ kubernetes-training/
 
 - `MASTER_CLASS_CURRICULUM.md`: complete course outline, labs, deliverables, and
   evaluation criteria
+- `STUDY_GUIDE.md`: week-by-week self-study plan aligned to the curriculum and labs
 - `labs/README.md`: index of all hands-on labs and supporting assets
 - `LICENSE`: permissive license for publishing and reuse
 
